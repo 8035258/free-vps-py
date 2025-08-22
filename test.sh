@@ -7,13 +7,12 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 NODE_INFO_FILE="$HOME/.xray_nodes_info"
-PROJECT_DIR_NAME="python-xray-argo"
 
 # 如果是-v参数，直接查看节点信息
 if [ "$1" = "-v" ]; then
     if [ -f "$NODE_INFO_FILE" ]; then
         echo -e "${GREEN}========================================${NC}"
-        echo -e "${GREEN}                      节点信息查看                      ${NC}"
+        echo -e "${GREEN}           节点信息查看               ${NC}"
         echo -e "${GREEN}========================================${NC}"
         echo
         cat "$NODE_INFO_FILE"
@@ -38,13 +37,12 @@ generate_uuid() {
 clear
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}    Python Xray Argo 一键部署脚本   ${NC}"
+echo -e "${GREEN}    Python Xray Argo 一键部署脚本    ${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo
 echo -e "${BLUE}基于项目: ${YELLOW}https://github.com/eooce/python-xray-argo${NC}"
 echo -e "${BLUE}脚本仓库: ${YELLOW}https://github.com/byJoey/free-vps-py${NC}"
 echo -e "${BLUE}TG交流群: ${YELLOW}https://t.me/+ft-zI76oovgwNmRh${NC}"
-echo -e "${RED}脚本作者YouTube: ${YELLOW}https://www.youtube.com/@joeyblog${RED}"
 echo
 echo -e "${GREEN}本脚本基于 eooce 大佬的 Python Xray Argo 项目开发${NC}"
 echo -e "${GREEN}提供极速和完整两种配置模式，简化部署流程${NC}"
@@ -56,15 +54,14 @@ echo -e "${YELLOW}请选择操作:${NC}"
 echo -e "${BLUE}1) 极速模式 - 只修改UUID并启动${NC}"
 echo -e "${BLUE}2) 完整模式 - 详细配置所有选项${NC}"
 echo -e "${BLUE}3) 查看节点信息 - 显示已保存的节点信息${NC}"
-echo -e "${BLUE}4) 查看保活状态 - 检查Hugging Face API保活状态${NC}"
 echo
-read -p "请输入选择 (1/2/3/4): " MODE_CHOICE
+read -p "请输入选择 (1/2/3): " MODE_CHOICE
 
 if [ "$MODE_CHOICE" = "3" ]; then
     if [ -f "$NODE_INFO_FILE" ]; then
         echo
         echo -e "${GREEN}========================================${NC}"
-        echo -e "${GREEN}                      节点信息查看                      ${NC}"
+        echo -e "${GREEN}           节点信息查看               ${NC}"
         echo -e "${GREEN}========================================${NC}"
         echo
         cat "$NODE_INFO_FILE"
@@ -94,43 +91,6 @@ if [ "$MODE_CHOICE" = "3" ]; then
     fi
 fi
 
-if [ "$MODE_CHOICE" = "4" ]; then
-    echo
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}               Hugging Face API 保活状态检查              ${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    echo
-    
-    if [ -d "$PROJECT_DIR_NAME" ]; then
-        cd "$PROJECT_DIR_NAME"
-    fi
-
-    KEEPALIVE_PID=$(pgrep -f "keep_alive_task.sh")
-
-    if [ -n "$KEEPALIVE_PID" ]; then
-        echo -e "服务状态: ${GREEN}运行中${NC}"
-        echo -e "进程PID: ${BLUE}$KEEPALIVE_PID${NC}"
-        if [ -f "keep_alive_task.sh" ]; then
-            # 更新为从 spaces API 地址中解析
-            REPO_ID=$(grep 'huggingface.co/api/spaces/' keep_alive_task.sh | head -1 | sed -n 's|.*api/spaces/\([^"]*\).*|\1|p')
-            echo -e "目标仓库: ${YELLOW}$REPO_ID (类型: Space)${NC}"
-        fi
-
-        echo -e "\n${YELLOW}--- 最近一次保活状态 ---${NC}"
-        if [ -f "keep_alive_status.log" ]; then
-           cat keep_alive_status.log
-        else
-           echo -e "${YELLOW}尚未生成状态日志，请稍等片刻(最多2分钟)后重试...${NC}"
-        fi
-    else
-        echo -e "服务状态: ${RED}未运行${NC}"
-        echo -e "${YELLOW}提示: 您可能尚未部署服务或未在部署时设置Hugging Face保活。${NC}"
-    fi
-    echo
-    exit 0
-fi
-
-
 echo -e "${BLUE}检查并安装依赖...${NC}"
 if ! command -v python3 &> /dev/null; then
     echo -e "${YELLOW}正在安装 Python3...${NC}"
@@ -138,37 +98,38 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 if ! python3 -c "import requests" &> /dev/null; then
-    echo -e "${YELLOW}正在安装 Python 依赖: requests...${NC}"
+    echo -e "${YELLOW}正在安装 Python 依赖...${NC}"
     pip3 install requests
 fi
 
-if [ ! -d "$PROJECT_DIR_NAME" ]; then
+PROJECT_DIR="python-xray-argo"
+if [ ! -d "$PROJECT_DIR" ]; then
     echo -e "${BLUE}下载完整仓库...${NC}"
     if command -v git &> /dev/null; then
-        git clone https://github.com/eooce/python-xray-argo.git "$PROJECT_DIR_NAME"
+        git clone https://github.com/eooce/python-xray-argo.git
     else
         echo -e "${YELLOW}Git未安装，使用wget下载...${NC}"
         wget -q https://github.com/eooce/python-xray-argo/archive/refs/heads/main.zip -O python-xray-argo.zip
         if command -v unzip &> /dev/null; then
             unzip -q python-xray-argo.zip
-            mv python-xray-argo-main "$PROJECT_DIR_NAME"
+            mv python-xray-argo-main python-xray-argo
             rm python-xray-argo.zip
         else
             echo -e "${YELLOW}正在安装 unzip...${NC}"
             sudo apt-get install -y unzip
             unzip -q python-xray-argo.zip
-            mv python-xray-argo-main "$PROJECT_DIR_NAME"
+            mv python-xray-argo-main python-xray-argo
             rm python-xray-argo.zip
         fi
     fi
     
-    if [ $? -ne 0 ] || [ ! -d "$PROJECT_DIR_NAME" ]; then
+    if [ $? -ne 0 ] || [ ! -d "$PROJECT_DIR" ]; then
         echo -e "${RED}下载失败，请检查网络连接${NC}"
         exit 1
     fi
 fi
 
-cd "$PROJECT_DIR_NAME"
+cd "$PROJECT_DIR"
 
 echo -e "${GREEN}依赖安装完成！${NC}"
 echo
@@ -180,41 +141,6 @@ fi
 
 cp app.py app.py.backup
 echo -e "${YELLOW}已备份原始文件为 app.py.backup${NC}"
-
-# 初始化保活变量
-KEEP_ALIVE_HF="false"
-HF_TOKEN=""
-HF_REPO_ID=""
-
-# 定义保活配置函数
-configure_hf_keep_alive() {
-    echo
-    echo -e "${YELLOW}是否设置 Hugging Face API 自动保活? (y/n)${NC}"
-    read -p "> " SETUP_KEEP_ALIVE
-    if [ "$SETUP_KEEP_ALIVE" = "y" ] || [ "$SETUP_KEEP_ALIVE" = "Y" ]; then
-        echo -e "${YELLOW}请输入您的 Hugging Face 访问令牌 (Token):${NC}"
-        echo -e "${BLUE}（令牌用于API认证，输入时将不可见。请前往 https://huggingface.co/settings/tokens 获取 不会使用看视频教程https://youtu.be/ZRaUWQMjR_c）${NC}"
-        read -sp "Token: " HF_TOKEN_INPUT
-        echo
-        if [ -z "$HF_TOKEN_INPUT" ]; then
-            echo -e "${RED}错误：Token 不能为空。已取消保活设置。${NC}"
-            return
-        fi
-
-        echo -e "${YELLOW}请输入要访问的 Hugging Face 仓库ID (模型或Space均可，例如: joeyhuangt/aaaa):${NC}"
-        read -p "Repo ID: " HF_REPO_ID_INPUT
-        if [ -z "$HF_REPO_ID_INPUT" ]; then
-            echo -e "${RED}错误：仓库ID 不能为空。已取消保活设置。${NC}"
-            return
-        fi
-
-        HF_TOKEN="$HF_TOKEN_INPUT"
-        HF_REPO_ID="$HF_REPO_ID_INPUT"
-        KEEP_ALIVE_HF="true"
-        echo -e "${GREEN}Hugging Face API 保活已设置！${NC}"
-        echo -e "${GREEN}目标仓库: $HF_REPO_ID${NC}"
-    fi
-}
 
 if [ "$MODE_CHOICE" = "1" ]; then
     echo -e "${BLUE}=== 极速模式 ===${NC}"
@@ -232,10 +158,8 @@ if [ "$MODE_CHOICE" = "1" ]; then
     
     sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', 'joeyblog.net')/" app.py
     echo -e "${GREEN}优选IP已自动设置为: joeyblog.net${NC}"
-    
-    configure_hf_keep_alive
-    
     echo -e "${GREEN}YouTube分流已自动配置${NC}"
+    
     echo
     echo -e "${GREEN}极速配置完成！正在启动服务...${NC}"
     echo
@@ -315,7 +239,16 @@ else
             echo -e "${GREEN}项目URL已设置${NC}"
         fi
 
-        configure_hf_keep_alive
+        echo -e "${YELLOW}当前自动保活状态: $(grep "AUTO_ACCESS = " app.py | grep -o "'[^']*'" | tail -1 | tr -d "'")${NC}"
+        echo -e "${YELLOW}是否启用自动保活? (y/n)${NC}"
+        read -p "> " AUTO_ACCESS_INPUT
+        if [ "$AUTO_ACCESS_INPUT" = "y" ] || [ "$AUTO_ACCESS_INPUT" = "Y" ]; then
+            sed -i "s/AUTO_ACCESS = os.environ.get('AUTO_ACCESS', '[^']*')/AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'true')/" app.py
+            echo -e "${GREEN}自动保活已启用${NC}"
+        elif [ "$AUTO_ACCESS_INPUT" = "n" ] || [ "$AUTO_ACCESS_INPUT" = "N" ]; then
+            sed -i "s/AUTO_ACCESS = os.environ.get('AUTO_ACCESS', '[^']*')/AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'false')/" app.py
+            echo -e "${GREEN}自动保活已禁用${NC}"
+        fi
 
         echo -e "${YELLOW}当前哪吒服务器: $(grep "NEZHA_SERVER = " app.py | cut -d"'" -f4)${NC}"
         read -p "请输入哪吒服务器地址 (留空保持不变): " NEZHA_SERVER_INPUT
@@ -376,9 +309,6 @@ echo -e "服务端口: $(grep "PORT = int" app.py | grep -o "or [0-9]*" | cut -d
 echo -e "优选IP: $(grep "CFIP = " app.py | cut -d"'" -f4)"
 echo -e "优选端口: $(grep "CFPORT = " app.py | cut -d"'" -f4)"
 echo -e "订阅路径: $(grep "SUB_PATH = " app.py | cut -d"'" -f4)"
-if [ "$KEEP_ALIVE_HF" = "true" ]; then
-    echo -e "保活仓库: $HF_REPO_ID"
-fi
 echo -e "${YELLOW}========================${NC}"
 echo
 
@@ -389,9 +319,6 @@ echo
 # 修改Python文件添加YouTube分流到xray配置，并增加80端口节点
 echo -e "${BLUE}正在添加YouTube分流功能和80端口节点...${NC}"
 cat > youtube_patch.py << 'EOF'
-# coding: utf-8
-import os, base64, json, subprocess, time
-
 # 读取app.py文件
 with open('app.py', 'r', encoding='utf-8') as f:
     content = f.read()
@@ -511,7 +438,7 @@ new_config = '''config = {
                 {
                     "type": "field",
                     "domain": [
-                        "youtube.com", "youtu.be", "instagram.com", "discord.com", "facebook.com", "fikfap.com", "telegram.org", "t.me",
+                        "youtube.com",
                         "googlevideo.com",
                         "ytimg.com",
                         "gstatic.com",
@@ -560,7 +487,7 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws
     # Additional actions
     send_telegram()
     upload_nodes()
- 
+  
     return sub_txt'''
 
 new_generate_function = '''# Generate links and subscription content
@@ -571,7 +498,7 @@ async def generate_links(argo_domain):
 
     time.sleep(2)
     
-    # TLS节点
+    # TLS节点 (443端口)
     VMESS_TLS = {"v": "2", "ps": f"{NAME}-{ISP}-TLS", "add": CFIP, "port": CFPORT, "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": argo_domain, "alpn": "", "fp": "chrome"}
     
     # 无TLS节点 (80端口)
@@ -605,7 +532,7 @@ trojan://{UUID}@{CFIP}:80?security=none&type=ws&host={argo_domain}&path=%2Ftroja
     # Additional actions
     send_telegram()
     upload_nodes()
- 
+  
     return sub_txt'''
 
 # 替换generate_links函数
@@ -646,38 +573,6 @@ fi
 
 echo -e "${GREEN}服务已在后台启动，PID: $APP_PID${NC}"
 echo -e "${YELLOW}日志文件: $(pwd)/app.log${NC}"
-
-# 如果设置了保活URL，则启动保活任务
-KEEPALIVE_PID=""
-if [ "$KEEP_ALIVE_HF" = "true" ]; then
-    echo -e "${BLUE}正在创建并启动 Hugging Face API 保活任务...${NC}"
-    # 创建保活任务脚本
-    echo "#!/bin/bash" > keep_alive_task.sh
-    echo "while true; do" >> keep_alive_task.sh
-    # 核心修改：优先尝试Spaces API，如果失败再尝试Models API
-    echo "    # 尝试 Spaces API" >> keep_alive_task.sh
-    echo "    status_code=\$(curl -s -o /dev/null -w \"%{http_code}\" --header \"Authorization: Bearer $HF_TOKEN\" \"https://huggingface.co/api/spaces/$HF_REPO_ID\")" >> keep_alive_task.sh
-    echo "    if [ \"\$status_code\" -eq 200 ]; then" >> keep_alive_task.sh
-    echo "        echo \"Hugging Face API 保活成功 (Space: $HF_REPO_ID, 状态码: 200) - \$(date '+%Y-%m-%d %H:%M:%S')\" > keep_alive_status.log" >> keep_alive_task.sh
-    echo "    else" >> keep_alive_task.sh
-    echo "        # 尝试 Models API" >> keep_alive_task.sh
-    echo "        status_code_model=\$(curl -s -o /dev/null -w \"%{http_code}\" --header \"Authorization: Bearer $HF_TOKEN\" \"https://huggingface.co/api/models/$HF_REPO_ID\")" >> keep_alive_task.sh
-    echo "        if [ \"\$status_code_model\" -eq 200 ]; then" >> keep_alive_task.sh
-    echo "            echo \"Hugging Face API 保活成功 (Model: $HF_REPO_ID, 状态码: 200) - \$(date '+%Y-%m-%d %H:%M:%S')\" > keep_alive_status.log" >> keep_alive_task.sh
-    echo "        else" >> keep_alive_task.sh
-    echo "            echo \"Hugging Face API 保活失败 (仓库: $HF_REPO_ID, Space API状态: \$status_code, Model API状态: \$status_code_model) - \$(date '+%Y-%m-%d %H:%M:%S')\" > keep_alive_status.log" >> keep_alive_task.sh
-    echo "        fi" >> keep_alive_task.sh
-    echo "    fi" >> keep_alive_task.sh
-    echo "    sleep 120" >> keep_alive_task.sh
-    echo "done" >> keep_alive_task.sh
-    chmod +x keep_alive_task.sh
-    
-    # 使用nohup后台运行保活任务
-    nohup ./keep_alive_task.sh >/dev/null 2>&1 &
-    KEEPALIVE_PID=$!
-    echo -e "${GREEN}Hugging Face API 保活任务已启动 (PID: $KEEPALIVE_PID)。${NC}"
-fi
-
 
 echo -e "${BLUE}等待服务启动...${NC}"
 sleep 8
@@ -753,16 +648,13 @@ fi
 
 echo
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}                      部署完成！                      ${NC}"
+echo -e "${GREEN}           部署完成！                   ${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo
 
 echo -e "${YELLOW}=== 服务信息 ===${NC}"
 echo -e "服务状态: ${GREEN}运行中${NC}"
-echo -e "主服务PID: ${BLUE}$APP_PID${NC}"
-if [ -n "$KEEPALIVE_PID" ]; then
-    echo -e "保活服务PID: ${BLUE}$KEEPALIVE_PID${NC}"
-fi
+echo -e "进程PID: ${BLUE}$APP_PID${NC}"
 echo -e "服务端口: ${BLUE}$SERVICE_PORT${NC}"
 echo -e "UUID: ${BLUE}$CURRENT_UUID${NC}"
 echo -e "订阅路径: ${BLUE}/$SUB_PATH_VALUE${NC}"
@@ -792,7 +684,7 @@ echo "$NODE_INFO"
 echo
 
 SAVE_INFO="========================================
-                      节点信息保存                      
+           节点信息保存               
 ========================================
 
 部署时间: $(date)
@@ -823,16 +715,9 @@ $NODE_INFO
 
 === 管理命令 ===
 查看日志: tail -f $(pwd)/app.log
-停止主服务: kill $APP_PID
-重启主服务: kill $APP_PID && nohup python3 app.py > app.log 2>&1 &
-查看进程: ps aux | grep app.py"
-
-if [ "$KEEP_ALIVE_HF" = "true" ]; then
-    SAVE_INFO="${SAVE_INFO}
-停止保活服务: pkill -f keep_alive_task.sh && rm keep_alive_task.sh keep_alive_status.log"
-fi
-
-SAVE_INFO="${SAVE_INFO}
+停止服务: kill $APP_PID
+重启服务: kill $APP_PID && nohup python3 app.py > app.log 2>&1 &
+查看进程: ps aux | grep python3
 
 === 分流说明 ===
 - 已集成YouTube分流优化到xray配置
@@ -841,7 +726,7 @@ SAVE_INFO="${SAVE_INFO}
 
 echo "$SAVE_INFO" > "$NODE_INFO_FILE"
 echo -e "${GREEN}节点信息已保存到 $NODE_INFO_FILE${NC}"
-echo -e "${YELLOW}使用脚本选择选项3或运行带-v参数可随时查看节点信息${NC}"
+echo -e "${YELLOW}使用脚本选择选项3可随时查看节点信息${NC}"
 
 echo -e "${YELLOW}=== 重要提示 ===${NC}"
 echo -e "${GREEN}部署已完成，节点信息已成功生成${NC}"
