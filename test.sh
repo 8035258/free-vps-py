@@ -7,12 +7,13 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 NODE_INFO_FILE="$HOME/.xray_nodes_info"
+PROJECT_DIR_NAME="python-xray-argo"
 
 # 如果是-v参数，直接查看节点信息
 if [ "$1" = "-v" ]; then
     if [ -f "$NODE_INFO_FILE" ]; then
         echo -e "${GREEN}========================================${NC}"
-        echo -e "${GREEN}           节点信息查看               ${NC}"
+        echo -e "${GREEN}                      节点信息查看                      ${NC}"
         echo -e "${GREEN}========================================${NC}"
         echo
         cat "$NODE_INFO_FILE"
@@ -37,12 +38,13 @@ generate_uuid() {
 clear
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}    Python Xray Argo 一键部署脚本    ${NC}"
+echo -e "${GREEN}    Python Xray Argo 一键部署脚本   ${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo
 echo -e "${BLUE}基于项目: ${YELLOW}https://github.com/eooce/python-xray-argo${NC}"
 echo -e "${BLUE}脚本仓库: ${YELLOW}https://github.com/byJoey/free-vps-py${NC}"
 echo -e "${BLUE}TG交流群: ${YELLOW}https://t.me/+ft-zI76oovgwNmRh${NC}"
+echo -e "${RED}脚本作者YouTube: ${YELLOW}https://www.youtube.com/@joeyblog${RED}"
 echo
 echo -e "${GREEN}本脚本基于 eooce 大佬的 Python Xray Argo 项目开发${NC}"
 echo -e "${GREEN}提供极速和完整两种配置模式，简化部署流程${NC}"
@@ -61,7 +63,7 @@ if [ "$MODE_CHOICE" = "3" ]; then
     if [ -f "$NODE_INFO_FILE" ]; then
         echo
         echo -e "${GREEN}========================================${NC}"
-        echo -e "${GREEN}           节点信息查看               ${NC}"
+        echo -e "${GREEN}                      节点信息查看                      ${NC}"
         echo -e "${GREEN}========================================${NC}"
         echo
         cat "$NODE_INFO_FILE"
@@ -84,12 +86,49 @@ if [ "$MODE_CHOICE" = "3" ]; then
             exit 0
         fi
     fi
-    
+
     if [ "$MODE_CHOICE" != "1" ] && [ "$MODE_CHOICE" != "2" ]; then
         echo -e "${GREEN}退出脚本${NC}"
         exit 0
     fi
 fi
+
+if [ "$MODE_CHOICE" = "4" ]; then
+    echo
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}               Hugging Face API 保活状态检查              ${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo
+
+    if [ -d "$PROJECT_DIR_NAME" ]; then
+        cd "$PROJECT_DIR_NAME"
+    fi
+
+    KEEPALIVE_PID=$(pgrep -f "keep_alive_task.sh")
+
+    if [ -n "$KEEPALIVE_PID" ]; then
+        echo -e "服务状态: ${GREEN}运行中${NC}"
+        echo -e "进程PID: ${BLUE}$KEEPALIVE_PID${NC}"
+        if [ -f "keep_alive_task.sh" ]; then
+            # 更新为从 spaces API 地址中解析
+            REPO_ID=$(grep 'huggingface.co/api/spaces/' keep_alive_task.sh | head -1 | sed -n 's|.*api/spaces/\([^"]*\).*|\1|p')
+            echo -e "目标仓库: ${YELLOW}$REPO_ID (类型: Space)${NC}"
+        fi
+
+        echo -e "\n${YELLOW}--- 最近一次保活状态 ---${NC}"
+        if [ -f "keep_alive_status.log" ]; then
+           cat keep_alive_status.log
+        else
+           echo -e "${YELLOW}尚未生成状态日志，请稍等片刻(最多2分钟)后重试...${NC}"
+        fi
+    else
+        echo -e "服务状态: ${RED}未运行${NC}"
+        echo -e "${YELLOW}提示: 您可能尚未部署服务或未在部署时设置Hugging Face保活。${NC}"
+    fi
+    echo
+    exit 0
+fi
+
 
 echo -e "${BLUE}检查并安装依赖...${NC}"
 if ! command -v python3 &> /dev/null; then
@@ -98,38 +137,37 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 if ! python3 -c "import requests" &> /dev/null; then
-    echo -e "${YELLOW}正在安装 Python 依赖...${NC}"
+    echo -e "${YELLOW}正在安装 Python 依赖: requests...${NC}"
     pip3 install requests
 fi
 
-PROJECT_DIR="python-xray-argo"
-if [ ! -d "$PROJECT_DIR" ]; then
+if [ ! -d "$PROJECT_DIR_NAME" ]; then
     echo -e "${BLUE}下载完整仓库...${NC}"
     if command -v git &> /dev/null; then
-        git clone https://github.com/eooce/python-xray-argo.git
+        git clone https://github.com/eooce/python-xray-argo.git "$PROJECT_DIR_NAME"
     else
         echo -e "${YELLOW}Git未安装，使用wget下载...${NC}"
         wget -q https://github.com/eooce/python-xray-argo/archive/refs/heads/main.zip -O python-xray-argo.zip
         if command -v unzip &> /dev/null; then
             unzip -q python-xray-argo.zip
-            mv python-xray-argo-main python-xray-argo
+            mv python-xray-argo-main "$PROJECT_DIR_NAME"
             rm python-xray-argo.zip
         else
             echo -e "${YELLOW}正在安装 unzip...${NC}"
             sudo apt-get install -y unzip
             unzip -q python-xray-argo.zip
-            mv python-xray-argo-main python-xray-argo
+            mv python-xray-argo-main "$PROJECT_DIR_NAME"
             rm python-xray-argo.zip
         fi
     fi
-    
-    if [ $? -ne 0 ] || [ ! -d "$PROJECT_DIR" ]; then
+
+    if [ $? -ne 0 ] || [ ! -d "$PROJECT_DIR_NAME" ]; then
         echo -e "${RED}下载失败，请检查网络连接${NC}"
         exit 1
     fi
 fi
 
-cd "$PROJECT_DIR"
+cd "$PROJECT_DIR_NAME"
 
 echo -e "${GREEN}依赖安装完成！${NC}"
 echo
@@ -142,32 +180,37 @@ fi
 cp app.py app.py.backup
 echo -e "${YELLOW}已备份原始文件为 app.py.backup${NC}"
 
+
+
+
 if [ "$MODE_CHOICE" = "1" ]; then
     echo -e "${BLUE}=== 极速模式 ===${NC}"
     echo
-    
+
     echo -e "${YELLOW}当前UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)${NC}"
     read -p "请输入新的 UUID (留空自动生成): " UUID_INPUT
     if [ -z "$UUID_INPUT" ]; then
         UUID_INPUT=$(generate_uuid)
         echo -e "${GREEN}自动生成UUID: $UUID_INPUT${NC}"
     fi
-    
+
     sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
     echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
-    
+
     sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', 'joeyblog.net')/" app.py
     echo -e "${GREEN}优选IP已自动设置为: joeyblog.net${NC}"
+
+    configure_hf_keep_alive
+
     echo -e "${GREEN}YouTube分流已自动配置${NC}"
-    
     echo
     echo -e "${GREEN}极速配置完成！正在启动服务...${NC}"
     echo
-    
+
 else
     echo -e "${BLUE}=== 完整配置模式 ===${NC}"
     echo
-    
+
     echo -e "${YELLOW}当前UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)${NC}"
     read -p "请输入新的 UUID (留空自动生成): " UUID_INPUT
     if [ -z "$UUID_INPUT" ]; then
@@ -192,9 +235,9 @@ else
     fi
 
     echo -e "${YELLOW}当前优选IP: $(grep "CFIP = " app.py | cut -d"'" -f4)${NC}"
-    read -p "请输入优选IP/域名 (留空使用默认 34.92.248.117): " CFIP_INPUT
+    read -p "请输入优选IP/域名 (留空使用默认 cdns.doon.eu.org): " CFIP_INPUT
     if [ -z "$CFIP_INPUT" ]; then
-        CFIP_INPUT="34.92.248.117"
+        CFIP_INPUT="cdns.doon.eu.org"
     fi
     sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', '$CFIP_INPUT')/" app.py
     echo -e "${GREEN}优选IP已设置为: $CFIP_INPUT${NC}"
@@ -213,67 +256,20 @@ else
         echo -e "${GREEN}Argo端口已设置为: $ARGO_PORT_INPUT${NC}"
     fi
 
-    echo -e "${YELLOW}当前订阅路径: $(grep "SUB_PATH = " app.py | cut -d"'" -f4)${NC}"
-    read -p "请输入订阅路径 (留空保持不变): " SUB_PATH_INPUT
-    if [ -n "$SUB_PATH_INPUT" ]; then
-        sed -i "s/SUB_PATH = os.environ.get('SUB_PATH', '[^']*')/SUB_PATH = os.environ.get('SUB_PATH', '$SUB_PATH_INPUT')/" app.py
-        echo -e "${GREEN}订阅路径已设置为: $SUB_PATH_INPUT${NC}"
-    fi
 
     echo
     echo -e "${YELLOW}是否配置高级选项? (y/n)${NC}"
     read -p "> " ADVANCED_CONFIG
 
-    if [ "$ADVANCED_CONFIG" = "y" ] || [ "$ADVANCED_CONFIG" = "Y" ]; then
-        echo -e "${YELLOW}当前上传URL: $(grep "UPLOAD_URL = " app.py | cut -d"'" -f4)${NC}"
-        read -p "请输入上传URL (留空保持不变): " UPLOAD_URL_INPUT
-        if [ -n "$UPLOAD_URL_INPUT" ]; then
-            sed -i "s|UPLOAD_URL = os.environ.get('UPLOAD_URL', '[^']*')|UPLOAD_URL = os.environ.get('UPLOAD_URL', '$UPLOAD_URL_INPUT')|" app.py
-            echo -e "${GREEN}上传URL已设置${NC}"
-        fi
 
-        echo -e "${YELLOW}当前项目URL: $(grep "PROJECT_URL = " app.py | cut -d"'" -f4)${NC}"
-        read -p "请输入项目URL (留空保持不变): " PROJECT_URL_INPUT
-        if [ -n "$PROJECT_URL_INPUT" ]; then
-            sed -i "s|PROJECT_URL = os.environ.get('PROJECT_URL', '[^']*')|PROJECT_URL = os.environ.get('PROJECT_URL', '$PROJECT_URL_INPUT')|" app.py
-            echo -e "${GREEN}项目URL已设置${NC}"
-        fi
+        configure_hf_keep_alive
 
-        echo -e "${YELLOW}当前自动保活状态: $(grep "AUTO_ACCESS = " app.py | grep -o "'[^']*'" | tail -1 | tr -d "'")${NC}"
-        echo -e "${YELLOW}是否启用自动保活? (y/n)${NC}"
-        read -p "> " AUTO_ACCESS_INPUT
-        if [ "$AUTO_ACCESS_INPUT" = "y" ] || [ "$AUTO_ACCESS_INPUT" = "Y" ]; then
-            sed -i "s/AUTO_ACCESS = os.environ.get('AUTO_ACCESS', '[^']*')/AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'true')/" app.py
-            echo -e "${GREEN}自动保活已启用${NC}"
-        elif [ "$AUTO_ACCESS_INPUT" = "n" ] || [ "$AUTO_ACCESS_INPUT" = "N" ]; then
-            sed -i "s/AUTO_ACCESS = os.environ.get('AUTO_ACCESS', '[^']*')/AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'false')/" app.py
-            echo -e "${GREEN}自动保活已禁用${NC}"
-        fi
-
-        echo -e "${YELLOW}当前哪吒服务器: $(grep "NEZHA_SERVER = " app.py | cut -d"'" -f4)${NC}"
-        read -p "请输入哪吒服务器地址 (留空保持不变): " NEZHA_SERVER_INPUT
-        if [ -n "$NEZHA_SERVER_INPUT" ]; then
-            sed -i "s|NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '[^']*')|NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '$NEZHA_SERVER_INPUT')|" app.py
-            
-            echo -e "${YELLOW}当前哪吒端口: $(grep "NEZHA_PORT = " app.py | cut -d"'" -f4)${NC}"
-            read -p "请输入哪吒端口 (v1版本留空): " NEZHA_PORT_INPUT
-            if [ -n "$NEZHA_PORT_INPUT" ]; then
-                sed -i "s|NEZHA_PORT = os.environ.get('NEZHA_PORT', '[^']*')|NEZHA_PORT = os.environ.get('NEZHA_PORT', '$NEZHA_PORT_INPUT')|" app.py
-            fi
-            
-            echo -e "${YELLOW}当前哪吒密钥: $(grep "NEZHA_KEY = " app.py | cut -d"'" -f4)${NC}"
-            read -p "请输入哪吒密钥: " NEZHA_KEY_INPUT
-            if [ -n "$NEZHA_KEY_INPUT" ]; then
-                sed -i "s|NEZHA_KEY = os.environ.get('NEZHA_KEY', '[^']*')|NEZHA_KEY = os.environ.get('NEZHA_KEY', '$NEZHA_KEY_INPUT')|" app.py
-            fi
-            echo -e "${GREEN}哪吒配置已设置${NC}"
-        fi
 
         echo -e "${YELLOW}当前Argo域名: $(grep "ARGO_DOMAIN = " app.py | cut -d"'" -f4)${NC}"
         read -p "请输入 Argo 固定隧道域名 (留空保持不变): " ARGO_DOMAIN_INPUT
         if [ -n "$ARGO_DOMAIN_INPUT" ]; then
             sed -i "s|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '[^']*')|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '$ARGO_DOMAIN_INPUT')|" app.py
-            
+
             echo -e "${YELLOW}当前Argo密钥: $(grep "ARGO_AUTH = " app.py | cut -d"'" -f4)${NC}"
             read -p "请输入 Argo 固定隧道密钥: " ARGO_AUTH_INPUT
             if [ -n "$ARGO_AUTH_INPUT" ]; then
@@ -282,20 +278,6 @@ else
             echo -e "${GREEN}Argo固定隧道配置已设置${NC}"
         fi
 
-        echo -e "${YELLOW}当前Bot Token: $(grep "BOT_TOKEN = " app.py | cut -d"'" -f4)${NC}"
-        read -p "请输入 Telegram Bot Token (留空保持不变): " BOT_TOKEN_INPUT
-        if [ -n "$BOT_TOKEN_INPUT" ]; then
-            sed -i "s|BOT_TOKEN = os.environ.get('BOT_TOKEN', '[^']*')|BOT_TOKEN = os.environ.get('BOT_TOKEN', '$BOT_TOKEN_INPUT')|" app.py
-            
-            echo -e "${YELLOW}当前Chat ID: $(grep "CHAT_ID = " app.py | cut -d"'" -f4)${NC}"
-            read -p "请输入 Telegram Chat ID: " CHAT_ID_INPUT
-            if [ -n "$CHAT_ID_INPUT" ]; then
-                sed -i "s|CHAT_ID = os.environ.get('CHAT_ID', '[^']*')|CHAT_ID = os.environ.get('CHAT_ID', '$CHAT_ID_INPUT')|" app.py
-            fi
-            echo -e "${GREEN}Telegram配置已设置${NC}"
-        fi
-    fi
-    
     echo -e "${GREEN}YouTube分流已自动配置${NC}"
 
     echo
@@ -309,6 +291,9 @@ echo -e "服务端口: $(grep "PORT = int" app.py | grep -o "or [0-9]*" | cut -d
 echo -e "优选IP: $(grep "CFIP = " app.py | cut -d"'" -f4)"
 echo -e "优选端口: $(grep "CFPORT = " app.py | cut -d"'" -f4)"
 echo -e "订阅路径: $(grep "SUB_PATH = " app.py | cut -d"'" -f4)"
+if [ "$KEEP_ALIVE_HF" = "true" ]; then
+    echo -e "保活仓库: $HF_REPO_ID"
+fi
 echo -e "${YELLOW}========================${NC}"
 echo
 
@@ -319,6 +304,9 @@ echo
 # 修改Python文件添加YouTube分流到xray配置，并增加80端口节点
 echo -e "${BLUE}正在添加YouTube分流功能和80端口节点...${NC}"
 cat > youtube_patch.py << 'EOF'
+# coding: utf-8
+import os, base64, json, subprocess, time
+
 # 读取app.py文件
 with open('app.py', 'r', encoding='utf-8') as f:
     content = f.read()
@@ -438,7 +426,7 @@ new_config = '''config = {
                 {
                     "type": "field",
                     "domain": [
-                        "youtube.com",
+                        "youtube.com", "youtu.be", "instagram.com", "discord.com", "facebook.com", "fikfap.com", "telegram.org", "t.me",
                         "googlevideo.com",
                         "ytimg.com",
                         "gstatic.com",
@@ -464,30 +452,30 @@ async def generate_links(argo_domain):
 
     time.sleep(2)
     VMESS = {"v": "2", "ps": f"{NAME}-{ISP}", "add": CFIP, "port": CFPORT, "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": argo_domain, "alpn": "", "fp": "chrome"}
- 
+
     list_txt = f"""
 vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
-  
+
 vmess://{ base64.b64encode(json.dumps(VMESS).encode('utf-8')).decode('utf-8')}
 
 trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
     """
-    
+
     with open(os.path.join(FILE_PATH, 'list.txt'), 'w', encoding='utf-8') as list_file:
         list_file.write(list_txt)
 
     sub_txt = base64.b64encode(list_txt.encode('utf-8')).decode('utf-8')
     with open(os.path.join(FILE_PATH, 'sub.txt'), 'w', encoding='utf-8') as sub_file:
         sub_file.write(sub_txt)
-        
+
     print(sub_txt)
-    
+
     print(f"{FILE_PATH}/sub.txt saved successfully")
-    
+
     # Additional actions
     send_telegram()
     upload_nodes()
-  
+
     return sub_txt'''
 
 new_generate_function = '''# Generate links and subscription content
@@ -497,42 +485,34 @@ async def generate_links(argo_domain):
     ISP = f"{meta_info[25]}-{meta_info[17]}".replace(' ', '_').strip()
 
     time.sleep(2)
-    
-    # TLS节点 (443端口)
+
+    # TLS节点
     VMESS_TLS = {"v": "2", "ps": f"{NAME}-{ISP}-TLS", "add": CFIP, "port": CFPORT, "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": argo_domain, "alpn": "", "fp": "chrome"}
-    
-    # 无TLS节点 (80端口)
-    VMESS_80 = {"v": "2", "ps": f"{NAME}-{ISP}-80", "add": CFIP, "port": "80", "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "", "sni": "", "alpn": "", "fp": ""}
- 
+
     list_txt = f"""
 vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}-TLS
-  
+
 vmess://{ base64.b64encode(json.dumps(VMESS_TLS).encode('utf-8')).decode('utf-8')}
 
 trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}-TLS
 
-vless://{UUID}@{CFIP}:80?encryption=none&security=none&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}-80
-
-vmess://{ base64.b64encode(json.dumps(VMESS_80).encode('utf-8')).decode('utf-8')}
-
-trojan://{UUID}@{CFIP}:80?security=none&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}-80
     """
-    
+
     with open(os.path.join(FILE_PATH, 'list.txt'), 'w', encoding='utf-8') as list_file:
         list_file.write(list_txt)
 
     sub_txt = base64.b64encode(list_txt.encode('utf-8')).decode('utf-8')
     with open(os.path.join(FILE_PATH, 'sub.txt'), 'w', encoding='utf-8') as sub_file:
         sub_file.write(sub_txt)
-        
+
     print(sub_txt)
-    
+
     print(f"{FILE_PATH}/sub.txt saved successfully")
-    
+
     # Additional actions
     send_telegram()
     upload_nodes()
-  
+
     return sub_txt'''
 
 # 替换generate_links函数
@@ -548,7 +528,6 @@ EOF
 python3 youtube_patch.py
 rm youtube_patch.py
 
-echo -e "${GREEN}YouTube分流和80端口节点已集成${NC}"
 
 # 先清理可能存在的进程
 pkill -f "python3 app.py" > /dev/null 2>&1
@@ -573,6 +552,8 @@ fi
 
 echo -e "${GREEN}服务已在后台启动，PID: $APP_PID${NC}"
 echo -e "${YELLOW}日志文件: $(pwd)/app.log${NC}"
+
+
 
 echo -e "${BLUE}等待服务启动...${NC}"
 sleep 8
@@ -613,7 +594,7 @@ while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
             break
         fi
     fi
-    
+
     # 每30秒显示一次等待提示
     if [ $((WAIT_COUNT % 30)) -eq 0 ]; then
         MINUTES=$((WAIT_COUNT / 60))
@@ -621,7 +602,7 @@ while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
         echo -e "${YELLOW}已等待 ${MINUTES}分${SECONDS}秒，继续等待节点生成...${NC}"
         echo -e "${BLUE}提示: Argo隧道建立需要时间，请继续等待${NC}"
     fi
-    
+
     sleep 5
     WAIT_COUNT=$((WAIT_COUNT + 5))
 done
@@ -648,43 +629,20 @@ fi
 
 echo
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}           部署完成！                   ${NC}"
+echo -e "${GREEN}                      部署完成！                      ${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo
 
 echo -e "${YELLOW}=== 服务信息 ===${NC}"
 echo -e "服务状态: ${GREEN}运行中${NC}"
-echo -e "进程PID: ${BLUE}$APP_PID${NC}"
+echo -e "主服务PID: ${BLUE}$APP_PID${NC}"
 echo -e "服务端口: ${BLUE}$SERVICE_PORT${NC}"
 echo -e "UUID: ${BLUE}$CURRENT_UUID${NC}"
-echo -e "订阅路径: ${BLUE}/$SUB_PATH_VALUE${NC}"
 echo
 
-echo -e "${YELLOW}=== 访问地址 ===${NC}"
-if command -v curl &> /dev/null; then
-    PUBLIC_IP=$(curl -s https://api.ipify.org 2>/dev/null || echo "获取失败")
-    if [ "$PUBLIC_IP" != "获取失败" ]; then
-        echo -e "订阅地址: ${GREEN}http://$PUBLIC_IP:$SERVICE_PORT/$SUB_PATH_VALUE${NC}"
-        echo -e "管理面板: ${GREEN}http://$PUBLIC_IP:$SERVICE_PORT${NC}"
-    fi
-fi
-echo -e "本地订阅: ${GREEN}http://localhost:$SERVICE_PORT/$SUB_PATH_VALUE${NC}"
-echo -e "本地面板: ${GREEN}http://localhost:$SERVICE_PORT${NC}"
-echo
-
-echo -e "${YELLOW}=== 节点信息 ===${NC}"
-DECODED_NODES=$(echo "$NODE_INFO" | base64 -d 2>/dev/null || echo "$NODE_INFO")
-
-echo -e "${GREEN}节点配置:${NC}"
-echo "$DECODED_NODES"
-echo
-
-echo -e "${GREEN}订阅链接:${NC}"
-echo "$NODE_INFO"
-echo
 
 SAVE_INFO="========================================
-           节点信息保存               
+                      节点信息保存
 ========================================
 
 部署时间: $(date)
@@ -692,20 +650,6 @@ UUID: $CURRENT_UUID
 服务端口: $SERVICE_PORT
 订阅路径: /$SUB_PATH_VALUE
 
-=== 访问地址 ==="
-
-if command -v curl &> /dev/null; then
-    PUBLIC_IP=$(curl -s https://api.ipify.org 2>/dev/null || echo "获取失败")
-    if [ "$PUBLIC_IP" != "获取失败" ]; then
-        SAVE_INFO="${SAVE_INFO}
-订阅地址: http://$PUBLIC_IP:$SERVICE_PORT/$SUB_PATH_VALUE
-管理面板: http://$PUBLIC_IP:$SERVICE_PORT"
-    fi
-fi
-
-SAVE_INFO="${SAVE_INFO}
-本地订阅: http://localhost:$SERVICE_PORT/$SUB_PATH_VALUE
-本地面板: http://localhost:$SERVICE_PORT
 
 === 节点信息 ===
 $DECODED_NODES
@@ -715,9 +659,16 @@ $NODE_INFO
 
 === 管理命令 ===
 查看日志: tail -f $(pwd)/app.log
-停止服务: kill $APP_PID
-重启服务: kill $APP_PID && nohup python3 app.py > app.log 2>&1 &
-查看进程: ps aux | grep python3
+停止主服务: kill $APP_PID
+重启主服务: kill $APP_PID && nohup python3 app.py > app.log 2>&1 &
+查看进程: ps aux | grep app.py"
+
+if [ "$KEEP_ALIVE_HF" = "true" ]; then
+    SAVE_INFO="${SAVE_INFO}
+停止保活服务: pkill -f keep_alive_task.sh && rm keep_alive_task.sh keep_alive_status.log"
+fi
+
+SAVE_INFO="${SAVE_INFO}
 
 === 分流说明 ===
 - 已集成YouTube分流优化到xray配置
@@ -726,7 +677,7 @@ $NODE_INFO
 
 echo "$SAVE_INFO" > "$NODE_INFO_FILE"
 echo -e "${GREEN}节点信息已保存到 $NODE_INFO_FILE${NC}"
-echo -e "${YELLOW}使用脚本选择选项3可随时查看节点信息${NC}"
+echo -e "${YELLOW}使用脚本选择选项3或运行带-v参数可随时查看节点信息${NC}"
 
 echo -e "${YELLOW}=== 重要提示 ===${NC}"
 echo -e "${GREEN}部署已完成，节点信息已成功生成${NC}"
