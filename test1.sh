@@ -141,8 +141,97 @@ fi
 cp app.py app.py.backup
 echo -e "${YELLOW}已备份原始文件为 app.py.backup${NC}"
 
-# ======= 配置模式逻辑保留不变 =======
-# (省略，与原脚本一致，未改动)
+if [ "$MODE_CHOICE" = "1" ]; then
+    echo -e "${BLUE}=== 极速模式 ===${NC}"
+    echo
+
+    echo -e "${YELLOW}当前UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)${NC}"
+    read -p "请输入新的 UUID (留空自动生成): " UUID_INPUT
+    if [ -z "$UUID_INPUT" ]; then
+        UUID_INPUT=$(generate_uuid)
+        echo -e "${GREEN}自动生成UUID: $UUID_INPUT${NC}"
+    fi
+
+    sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
+    echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
+
+    sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', 'cdns.doon.eu.org')/" app.py
+    echo -e "${GREEN}优选IP已自动设置为: cdns.doon.eu.org${NC}"
+
+    echo
+    echo -e "${GREEN}极速配置完成！正在启动服务...${NC}"
+    echo
+
+else
+    echo -e "${BLUE}=== 完整配置模式 ===${NC}"
+    echo
+
+    echo -e "${YELLOW}当前UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)${NC}"
+    read -p "请输入新的 UUID (留空自动生成): " UUID_INPUT
+    if [ -z "$UUID_INPUT" ]; then
+        UUID_INPUT=$(generate_uuid)
+        echo -e "${GREEN}自动生成UUID: $UUID_INPUT${NC}"
+    fi
+    sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
+    echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
+
+    echo -e "${YELLOW}当前节点名称: $(grep "NAME = " app.py | head -1 | cut -d"'" -f4)${NC}"
+    read -p "请输入节点名称 (留空保持不变): " NAME_INPUT
+    if [ -n "$NAME_INPUT" ]; then
+        sed -i "s/NAME = os.environ.get('NAME', '[^']*')/NAME = os.environ.get('NAME', '$NAME_INPUT')/" app.py
+        echo -e "${GREEN}节点名称已设置为: $NAME_INPUT${NC}"
+    fi
+
+    echo -e "${YELLOW}当前服务端口: $(grep "PORT = int" app.py | grep -o "or [0-9]*" | cut -d" " -f2)${NC}"
+    read -p "请输入服务端口 (留空保持不变): " PORT_INPUT
+    if [ -n "$PORT_INPUT" ]; then
+        sed -i "s/PORT = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or [0-9]*)/PORT = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or $PORT_INPUT)/" app.py
+        echo -e "${GREEN}端口已设置为: $PORT_INPUT${NC}"
+    fi
+
+    echo -e "${YELLOW}当前优选IP: $(grep "CFIP = " app.py | cut -d"'" -f4)${NC}"
+    read -p "请输入优选IP/域名 (留空使用默认 cdns.doon.eu.org): " CFIP_INPUT
+    if [ -z "$CFIP_INPUT" ]; then
+        CFIP_INPUT="cdns.doon.eu.org"
+    fi
+    sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', '$CFIP_INPUT')/" app.py
+    echo -e "${GREEN}优选IP已设置为: $CFIP_INPUT${NC}"
+
+    echo -e "${YELLOW}当前优选端口: $(grep "CFPORT = " app.py | cut -d"'" -f4)${NC}"
+    read -p "请输入优选端口 (留空保持不变): " CFPORT_INPUT
+    if [ -n "$CFPORT_INPUT" ]; then
+        sed -i "s/CFPORT = int(os.environ.get('CFPORT', '[^']*'))/CFPORT = int(os.environ.get('CFPORT', '$CFPORT_INPUT'))/" app.py
+        echo -e "${GREEN}优选端口已设置为: $CFPORT_INPUT${NC}"
+    fi
+
+    echo -e "${YELLOW}当前Argo端口: $(grep "ARGO_PORT = " app.py | cut -d"'" -f4)${NC}"
+    read -p "请输入 Argo 端口 (留空保持不变): " ARGO_PORT_INPUT
+    if [ -n "$ARGO_PORT_INPUT" ]; then
+        sed -i "s/ARGO_PORT = int(os.environ.get('ARGO_PORT', '[^']*'))/ARGO_PORT = int(os.environ.get('ARGO_PORT', '$ARGO_PORT_INPUT'))/" app.py
+        echo -e "${GREEN}Argo端口已设置为: $ARGO_PORT_INPUT${NC}"
+    fi
+
+    echo
+    echo -e "${YELLOW}是否配置高级选项? (y/n)${NC}"
+    read -p "> " ADVANCED_CONFIG
+
+    if [ "$ADVANCED_CONFIG" = "y" ] || [ "$ADVANCED_CONFIG" = "Y" ]; then
+        echo -e "${YELLOW}当前Argo域名: $(grep "ARGO_DOMAIN = " app.py | cut -d"'" -f4)${NC}"
+        read -p "请输入 Argo 固定隧道域名 (留空保持不变): " ARGO_DOMAIN_INPUT
+        if [ -n "$ARGO_DOMAIN_INPUT" ]; then
+            sed -i "s|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '[^']*')|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '$ARGO_DOMAIN_INPUT')|" app.py
+
+            echo -e "${YELLOW}当前Argo密钥: $(grep "ARGO_AUTH = " app.py | cut -d"'" -f4)${NC}"
+            read -p "请输入 Argo 固定隧道密钥: " ARGO_AUTH_INPUT
+            if [ -n "$ARGO_AUTH_INPUT" ]; then
+                sed -i "s|ARGO_AUTH = os.environ.get('ARGO_AUTH', '[^']*')|ARGO_AUTH = os.environ.get('ARGO_AUTH', '$ARGO_AUTH_INPUT')|" app.py
+            fi
+            echo -e "${GREEN}Argo固定隧道配置已设置${NC}"
+        fi
+    fi
+
+    echo -e "${GREEN}完整配置完成！${NC}"
+fi
 
 echo -e "${YELLOW}=== 当前配置摘要 ===${NC}"
 echo -e "UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)"
@@ -157,14 +246,12 @@ echo -e "${BLUE}正在启动服务...${NC}"
 echo -e "${YELLOW}当前工作目录：$(pwd)${NC}"
 echo
 
-# 直接启动，不再执行 YouTube 分流和 80端口补丁
+# 去掉了 YouTube 分流和 80端口补丁逻辑
 pkill -f "python3 app.py" > /dev/null 2>&1
 sleep 2
-
 python3 app.py > app.log 2>&1 &
 APP_PID=$!
 
-# 验证PID获取成功
 if [ -z "$APP_PID" ] || [ "$APP_PID" -eq 0 ]; then
     echo -e "${RED}获取进程PID失败，尝试直接启动${NC}"
     nohup python3 app.py > app.log 2>&1 &
