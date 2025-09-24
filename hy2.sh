@@ -45,6 +45,8 @@ tls:
 auth:
   type: password
   password: "$PASSWD"
+  
+fastOpen: true
 
 masquerade:
   type: proxy
