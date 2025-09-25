@@ -61,6 +61,7 @@ echo -e "${YELLOW}请选择操作:${NC}"
 echo -e "${BLUE}1) 极速模式 - 只修改UUID并启动${NC}"
 echo -e "${BLUE}2) 完整模式 - 详细配置所有选项${NC}"
 echo -e "${BLUE}3) 查看节点信息 - 显示已保存的节点信息${NC}"
+echo -e "${BLUE}4) 卸载脚本${NC}"
 echo
 read -p "请输入选择 (1/2/3/4): " MODE_CHOICE
 
