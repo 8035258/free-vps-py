@@ -64,6 +64,10 @@ echo -e "${BLUE}3) 查看节点信息 - 显示已保存的节点信息${NC}"
 echo
 read -p "请输入选择 (1/2/3/4): " MODE_CHOICE
 
+if [ "$MODE_CHOICE" = "4" ]; then
+    uninstall_script
+fi
+
 if [ "$MODE_CHOICE" = "3" ]; then
     if [ -f "$NODE_INFO_FILE" ]; then
         echo
