@@ -400,7 +400,7 @@ run_installation() {
     detect_os_arch
     install_dependencies
     stop_and_disable_services
-    download_and_install "xray" "$XRAY_BIN" "$XRAY_URL_BASE" "Xray-linux-${ARCH}.zip"
+    download_and_install "xray" "$XRAY_BIN" "$XRAY_URL_BASE" "Xray-linux-64.zip"
     download_and_install "cloudflared" "$CLOUDFLARED_BIN" "$CLOUDFLARED_URL_BASE" "cloudflared-linux-${ARCH}"
     create_config_file
     create_and_enable_service
