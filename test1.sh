@@ -179,8 +179,8 @@ if [ "$MODE_CHOICE" = "1" ]; then
     sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
     echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
 
-    sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', 'cdns.doon.eu.org')/" app.py
-    echo -e "${GREEN}优选IP已自动设置为: cdns.doon.eu.org${NC}"
+    sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', 'cloudflare.182682.xyz')/" app.py
+    echo -e "${GREEN}优选IP已自动设置为: cloudflare.182682.xyz${NC}"
 
     echo
     echo -e "${GREEN}极速配置完成！正在启动服务...${NC}"
