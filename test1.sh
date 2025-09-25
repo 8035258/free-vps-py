@@ -1,412 +1,486 @@
 #!/bin/bash
 
+# --- 颜色和样式 ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-NODE_INFO_FILE="$HOME/.xray_nodes_info"
+# --- 静态变量 ---
+NODE_INFO_FILE="$HOME/.xray_vless_node_info"
+INSTALL_PATH="/etc/xray"
+CONFIG_FILE="${INSTALL_PATH}/config.json"
+XRAY_BIN="/usr/local/bin/xray"
+CLOUDFLARED_BIN="/usr/local/bin/cloudflared"
+XRAY_URL_BASE="https://github.com/XTLS/Xray-core/releases/latest/download/"
+CLOUDFLARED_URL_BASE="https://github.com/cloudflare/cloudflared/releases/latest/download/"
+# 内部Xray服务监听的端口
+XRAY_PORT="8001" 
 
-# 如果是-v参数，直接查看节点信息
-if [ "$1" = "-v" ]; then
-    if [ -f "$NODE_INFO_FILE" ]; then
-        echo -e "${GREEN}========================================${NC}"
-        echo -e "${GREEN}           节点信息查看               ${NC}"
-        echo -e "${GREEN}========================================${NC}"
-        echo
-        cat "$NODE_INFO_FILE"
-        echo
-    else
-        echo -e "${RED}未找到节点信息文件${NC}"
-        echo -e "${YELLOW}请先运行部署脚本生成节点信息${NC}"
-    fi
-    exit 0
-fi
+# --- 全局变量 (由用户输入或默认值填充) ---
+UUID=""
+NODE_NAME="VLESS-Argo"
+CFIP="cloudflare.182682.xyz"
+CFPORT="443"
+ARGO_DOMAIN=""
+ARGO_AUTH=""
 
+
+# =================================================================
+# --- 核心功能函数 ---
+# =================================================================
+
+# 打印日志
+log() { echo -e "${BLUE}[INFO]${NC} $1"; }
+# 打印成功信息
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+# 打印警告信息
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+# 打印错误信息并退出
+error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+# 生成 UUID
 generate_uuid() {
     if command -v uuidgen &> /dev/null; then
         uuidgen | tr '[:upper:]' '[:lower:]'
     elif command -v python3 &> /dev/null; then
         python3 -c "import uuid; print(str(uuid.uuid4()))"
     else
-        hexdump -n 16 -e '4/4 "%08X" 1 "\n"' /dev/urandom | sed 's/\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)/\1\2\3\4-\5\6-\7\8-\9\10-\11\12\13\14\15\16/' | tr '[:upper:]' '[:lower:]'
+        cat /proc/sys/kernel/random/uuid
     fi
 }
 
-clear
-
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}    Python Xray Argo 一键部署脚本    ${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo
-echo -e "${BLUE}基于项目: ${YELLOW}https://github.com/eooce/python-xray-argo${NC}"
-echo -e "${BLUE}脚本仓库: ${YELLOW}https://github.com/byJoey/free-vps-py${NC}"
-echo -e "${BLUE}TG交流群: ${YELLOW}https://t.me/+ft-zI76oovgwNmRh${NC}"
-echo
-echo -e "${GREEN}本脚本基于 eooce 大佬的 Python Xray Argo 项目开发${NC}"
-echo -e "${GREEN}提供极速和完整两种配置模式，简化部署流程${NC}"
-echo -e "${GREEN}支持自动UUID生成、后台运行、节点信息输出${NC}"
-echo
-
-# --- START OF MODIFICATIONS FOR ALPINE SUPPORT ---
-
-install_dependencies() {
-    OS_ID=""
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS_ID=$ID
-    fi
-
-    echo -e "${BLUE}检查并安装依赖...${NC}"
-
-    if [ "$OS_ID" = "alpine" ]; then
-        echo -e "${YELLOW}检测到 Alpine 系统，使用 apk 安装依赖...${NC}"
-        apk update
-        # 安装脚本运行所需的所有工具
-        apk add --no-cache bash python3 py3-pip git wget unzip curl procps util-linux
-    elif [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ]; then
-        echo -e "${YELLOW}检测到 Debian/Ubuntu 系统，使用 apt-get 安装依赖...${NC}"
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update
-        # 安装脚本运行所需的所有工具
-        apt-get install -y python3 python3-pip git wget unzip curl procps uuid-runtime
-    else
-        echo -e "${RED}无法识别的操作系统: $OS_ID${NC}"
-        echo -e "${YELLOW}脚本将继续，但请确保已手动安装以下工具:${NC}"
-        echo -e "${YELLOW}python3, pip, git, wget, unzip, curl, pkill, ps, uuidgen${NC}"
-    fi
-
-    if ! python3 -c "import requests" &> /dev/null; then
-        echo -e "${YELLOW}正在安装 Python 依赖 (requests)...${NC}"
-        pip3 install requests
-    fi
-    
-    echo -e "${GREEN}依赖安装完成！${NC}"
-}
-
-# 统一执行依赖安装
-install_dependencies
-
-# --- END OF MODIFICATIONS FOR ALPINE SUPPORT ---
-
-
-echo -e "${YELLOW}请选择操作:${NC}"
-echo -e "${BLUE}1) 极速模式 - 只修改UUID并启动${NC}"
-echo -e "${BLUE}2) 完整模式 - 详细配置所有选项${NC}"
-echo -e "${BLUE}3) 查看节点信息 - 显示已保存的节点信息${NC}"
-echo
-read -p "请输入选择 (1/2/3): " MODE_CHOICE
-
-if [ "$MODE_CHOICE" = "3" ]; then
+# 查看已保存的节点信息
+view_node_info() {
     if [ -f "$NODE_INFO_FILE" ]; then
-        echo
         echo -e "${GREEN}========================================${NC}"
         echo -e "${GREEN}           节点信息查看               ${NC}"
         echo -e "${GREEN}========================================${NC}"
         echo
         cat "$NODE_INFO_FILE"
         echo
-        echo -e "${YELLOW}提示: 如需重新部署，请重新运行脚本选择模式1或2${NC}"
     else
-        echo
-        echo -e "${RED}未找到节点信息文件${NC}"
-        echo -e "${YELLOW}请先运行部署脚本生成节点信息${NC}"
-        echo
-        echo -e "${BLUE}是否现在开始部署? (y/n)${NC}"
-        read -p "> " START_DEPLOY
-        if [ "$START_DEPLOY" = "y" ] || [ "$START_DEPLOY" = "Y" ]; then
-            echo -e "${YELLOW}请选择部署模式:${NC}"
-            echo -e "${BLUE}1) 极速模式${NC}"
-            echo -e "${BLUE}2) 完整模式${NC}"
-            read -p "请输入选择 (1/2): " MODE_CHOICE
-        else
-            echo -e "${GREEN}退出脚本${NC}"
-            exit 0
-        fi
+        error "未找到节点信息文件 ($NODE_INFO_FILE)"
+        warn "请先运行部署脚本生成节点信息"
+    fi
+}
+
+# 检查 root 权限
+check_root() {
+    [[ $EUID -ne 0 ]] && error "此脚本需要以 root 权限运行。"
+}
+
+# 检测操作系统和架构
+detect_os_arch() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS_ID=$ID
+    else
+        error "无法检测到操作系统。"
+    fi
+    log "检测到操作系统: $OS_ID"
+
+    case $(uname -m) in
+        x86_64 | amd64) ARCH="amd64" ;;
+        aarch64 | arm64) ARCH="arm64" ;;
+        *) error "不支持的系统架构: $(uname -m)" ;;
+    esac
+    log "检测到系统架构: $ARCH"
+}
+
+# 安装依赖
+install_dependencies() {
+    log "正在更新软件包列表并安装依赖..."
+    case $OS_ID in
+        alpine)
+            apk update && apk add --no-cache curl wget unzip bash jq
+            ;;
+        debian | ubuntu)
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update && apt-get install -y curl wget unzip bash jq uuid-runtime
+            ;;
+        *)
+            warn "无法识别的操作系统: $OS_ID, 脚本将继续，但请确保已手动安装 curl, wget, unzip, bash, jq"
+            ;;
+    esac
+    [[ $? -ne 0 ]] && error "依赖安装失败。"
+    success "依赖安装完成。"
+}
+
+# 停止并禁用旧服务
+stop_and_disable_services() {
+    log "正在停止并禁用可能存在的旧服务..."
+    if command -v systemctl &> /dev/null; then
+        systemctl stop xray cloudflared &>/dev/null
+        systemctl disable xray cloudflared &>/dev/null
+    elif command -v rc-service &> /dev/null; then
+        rc-service xray stop &>/dev/null
+        rc-service cloudflared stop &>/dev/null
+        rc-update del xray default &>/dev/null
+        rc-update del cloudflared default &>/dev/null
+    fi
+}
+
+# 下载并安装二进制文件
+download_and_install() {
+    local name="$1"
+    local bin_path="$2"
+    local base_url="$3"
+    local file_pattern="$4"
+
+    local download_url="${base_url}${file_pattern}"
+    
+    log "正在下载 $name..."
+    wget -q -O "/tmp/$name.dl" "$download_url"
+    [[ $? -ne 0 ]] && error "$name 下载失败。 URL: $download_url"
+
+    if [[ "$file_pattern" == *.zip ]]; then
+        log "正在解压并安装 $name..."
+        unzip -q -o "/tmp/$name.dl" -d /tmp/install_temp
+        mv "/tmp/install_temp/xray" "$bin_path"
+    else
+        log "正在安装 $name..."
+        mv "/tmp/$name.dl" "$bin_path"
     fi
 
-    if [ "$MODE_CHOICE" != "1" ] && [ "$MODE_CHOICE" != "2" ]; then
-        echo -e "${GREEN}退出脚本${NC}"
+    chmod +x "$bin_path"
+    rm -rf /tmp/install_temp /tmp/$name.dl
+    success "$name 安装完成。"
+}
+
+# 创建 Xray 配置文件
+create_config_file() {
+    log "正在创建 Xray 配置文件..."
+    mkdir -p "$INSTALL_PATH"
+    cat > "$CONFIG_FILE" <<EOF
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": ${XRAY_PORT},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${UUID}",
+            "level": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom"
+    }
+  ]
+}
+EOF
+    success "配置文件创建完成: $CONFIG_FILE"
+}
+
+# 创建并启用服务
+create_and_enable_service() {
+    log "正在创建并启用服务..."
+    
+    # 根据是否提供了Argo Token决定cloudflared的启动命令
+    if [[ -n "$ARGO_AUTH" ]]; then
+        # 使用永久隧道Token
+        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate run --token ${ARGO_AUTH}"
+    else
+        # 使用临时隧道
+        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate --url http://127.0.0.1:${XRAY_PORT}"
+    fi
+
+    if [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ]; then
+        # --- 创建 Debian/Ubuntu (systemd) 服务 ---
+        cat > /etc/systemd/system/xray.service <<EOF
+[Unit]
+Description=Xray Service
+After=network.target
+[Service]
+ExecStart=${XRAY_BIN} run -c ${CONFIG_FILE}
+Restart=on-failure
+User=root
+Group=root
+[Install]
+WantedBy=multi-user.target
+EOF
+        cat > /etc/systemd/system/cloudflared.service <<EOF
+[Unit]
+Description=Cloudflare Tunnel
+After=network.target
+[Service]
+ExecStart=${CLOUDFLARED_EXEC}
+Restart=on-failure
+User=root
+Group=root
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload
+        systemctl enable xray cloudflared
+        systemctl restart xray cloudflared
+    elif [ "$OS_ID" = "alpine" ]; then
+        # --- 创建 Alpine (OpenRC) 服务 ---
+        cat > /etc/init.d/xray <<EOF
+#!/sbin/openrc-run
+command="${XRAY_BIN}"
+command_args="run -c ${CONFIG_FILE}"
+pidfile="/run/\${RC_SVCNAME}.pid"
+name="xray"
+depend() { need net; }
+EOF
+        chmod +x /etc/init.d/xray
+        cat > /etc/init.d/cloudflared <<EOF
+#!/sbin/openrc-run
+command="${CLOUDFLARED_BIN}"
+command_args="tunnel --no-autoupdate run --token ${ARGO_AUTH}"
+pidfile="/run/\${RC_SVCNAME}.pid"
+name="cloudflared"
+depend() { need net; }
+EOF
+        chmod +x /etc/init.d/cloudflared
+        rc-update add xray default
+        rc-update add cloudflared default
+        rc-service xray restart >/dev/null 2>&1 &
+        rc-service cloudflared restart >/dev/null 2>&1 &
+    fi
+    success "服务创建并启动成功。"
+}
+
+# 显示并保存结果
+show_and_save_result() {
+    local final_domain="$ARGO_DOMAIN"
+
+    if [[ -z "$final_domain" ]]; then
+        log "使用临时隧道，正在获取隧道域名..."
+        sleep 10 # 等待cloudflared启动并生成日志
+
+        if [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ]; then
+            TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z-]*\.trycloudflare\.com')
+        elif [ "$OS_ID" = "alpine" ]; then
+        # Alpine日志可能写入/var/log/cloudflared.log，具体取决于版本
+             TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
+        fi
+        
+        # 重试机制
+        retries=0
+        while [ -z "$TUNNEL_URL" ] && [ $retries -lt 5 ]; do
+            warn "未能获取到域名，5秒后重试..."
+            sleep 5
+            if [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ]; then
+                TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z-]*\.trycloudflare\.com')
+            else
+                TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
+            fi
+            ((retries++))
+        done
+        
+        [[ -z "$TUNNEL_URL" ]] && error "无法获取 Cloudflare Tunnel 域名，请检查 cloudflared 服务状态。"
+        final_domain=$(echo "$TUNNEL_URL" | sed 's|https://||')
+    fi
+    
+    success "获取到的域名: $final_domain"
+
+    # 生成 VLESS 链接
+    VLESS_LINK="vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${final_domain}&fp=randomized&type=ws&host=${final_domain}&path=%2Fvless#${NODE_NAME}"
+    
+    # 准备保存到文件的信息
+    SAVE_INFO="========================================
+           节点信息 (VLESS)
+========================================
+部署时间: $(date)
+节点名称: ${NODE_NAME}
+UUID: ${UUID}
+优选IP: ${CFIP}
+优选端口: ${CFPORT}
+隧道域名: ${final_domain}
+----------------------------------------
+VLESS 链接:
+${VLESS_LINK}
+----------------------------------------
+管理命令:
+查看节点: bash $0 -v
+重启服务:
+  - Debian/Ubuntu: systemctl restart xray cloudflared
+  - Alpine: rc-service xray restart && rc-service cloudflared restart
+查看日志:
+  - Debian/Ubuntu: journalctl -u xray -f & journalctl -u cloudflared -f
+  - Alpine: tail -f /var/log/messages
+========================================"
+
+    echo "$SAVE_INFO" > "$NODE_INFO_FILE"
+
+    clear
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}           部署完成！                   ${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo
+    echo -e "${YELLOW}节点信息已保存到: ${NC}${BLUE}$NODE_INFO_FILE${NC}"
+    echo
+    # 从文件中打印信息，确保一致性
+    cat "$NODE_INFO_FILE"
+    echo
+    success "感谢使用！"
+}
+
+
+# =================================================================
+# --- 交互式菜单和安装流程 ---
+# =================================================================
+
+# 极速模式
+quick_mode() {
+    clear
+    echo -e "${BLUE}=== 极速模式 ===${NC}"
+    read -p "请输入您的 UUID (留空将自动生成): " UUID_INPUT
+    UUID=${UUID_INPUT:-$(generate_uuid)}
+    success "UUID 已设置为: $UUID"
+    
+    # 使用默认值
+    NODE_NAME="VLESS-Argo-Quick"
+    CFIP="cloudflare.182682.xyz"
+    CFPORT="443"
+    ARGO_DOMAIN=""
+    ARGO_AUTH=""
+    
+    run_installation
+}
+
+# 完整模式
+full_mode() {
+    clear
+    echo -e "${BLUE}=== 完整配置模式 ===${NC}"
+    read -p "请输入您的 UUID (留空将自动生成): " UUID_INPUT
+    UUID=${UUID_INPUT:-$(generate_uuid)}
+    success "UUID 已设置为: $UUID"
+
+    read -p "请输入节点名称 [默认: VLESS-Argo]: " NODE_NAME_INPUT
+    NODE_NAME=${NODE_NAME_INPUT:-"VLESS-Argo"}
+
+    read -p "请输入优选IP/域名 [默认: cloudflare.182682.xyz]: " CFIP_INPUT
+    CFIP=${CFIP_INPUT:-"cloudflare.182682.xyz"}
+
+    read -p "请输入优选端口 [默认: 443]: " CFPORT_INPUT
+    CFPORT=${CFPORT_INPUT:-"443"}
+
+    echo
+    warn "如果您有 Cloudflare Argo 隧道的固定 Token，请输入它。"
+    warn "这将创建一个永久隧道，无需每次启动都生成新域名。"
+    warn "留空则使用临时的 trycloudflare.com 域名。"
+    read -p "请输入 Argo Tunnel Token (留空使用临时隧道): " ARGO_AUTH_INPUT
+    ARGO_AUTH=${ARGO_AUTH_INPUT}
+    
+    if [[ -n "$ARGO_AUTH" ]]; then
+        warn "由于您使用了 Argo Token，您需要提供一个已在Cloudflare上配置好的域名。"
+        read -p "请输入与该Token关联的域名 (必须填写): " ARGO_DOMAIN_INPUT
+        [[ -z "$ARGO_DOMAIN_INPUT" ]] && error "使用Argo Token时必须提供固定域名。"
+        ARGO_DOMAIN=${ARGO_DOMAIN_INPUT}
+    fi
+    
+    run_installation
+}
+
+# 运行实际安装流程
+run_installation() {
+    echo -e "${GREEN}=== 开始部署 ===${NC}"
+    check_root
+    detect_os_arch
+    install_dependencies
+    stop_and_disable_services
+    download_and_install "xray" "$XRAY_BIN" "$XRAY_URL_BASE" "Xray-linux-64.zip"
+    download_and_install "cloudflared" "$CLOUDFLARED_BIN" "$CLOUDFLARED_URL_BASE" "cloudflared-linux-${ARCH}"
+    create_config_file
+    create_and_enable_service
+    show_and_save_result
+}
+
+# 卸载脚本
+uninstall_service() {
+    clear
+    echo -e "${RED}=== 卸载脚本 ===${NC}"
+    warn "这将从系统中移除 Xray, Cloudflared 以及所有相关配置文件和服务。"
+    read -p "您确定要继续吗? (y/N): " CONFIRM_UNINSTALL
+    if [[ ! "$CONFIRM_UNINSTALL" =~ ^[yY]$ ]]; then
+        echo -e "${YELLOW}卸载已取消。${NC}"
         exit 0
     fi
-fi
 
-
-PROJECT_DIR="python-xray-argo"
-if [ ! -d "$PROJECT_DIR" ]; then
-    echo -e "${BLUE}下载完整仓库...${NC}"
-    # 依赖已在前面安装，此处直接使用
-    if command -v git &> /dev/null; then
-        git clone https://github.com/eooce/python-xray-argo.git
-    else
-        echo -e "${YELLOW}Git未安装，使用wget下载...${NC}"
-        wget -q https://github.com/eooce/python-xray-argo/archive/refs/heads/main.zip -O python-xray-argo.zip
-        unzip -q python-xray-argo.zip
-        mv python-xray-argo-main python-xray-argo
-        rm python-xray-argo.zip
+    check_root
+    detect_os_arch
+    
+    log "正在停止并禁用服务..."
+    if command -v systemctl &> /dev/null; then
+        systemctl stop xray cloudflared &>/dev/null
+        systemctl disable xray cloudflared &>/dev/null
+        log "正在移除 systemd 服务文件..."
+        rm -f /etc/systemd/system/xray.service /etc/systemd/system/cloudflared.service
+        log "正在重新加载 systemd..."
+        systemctl daemon-reload
+    elif command -v rc-service &> /dev/null; then
+        rc-service xray stop &>/dev/null
+        rc-service cloudflared stop &>/dev/null
+        rc-update del xray default &>/dev/null
+        rc-update del cloudflared default &>/dev/null
+        log "正在移除 OpenRC 服务文件..."
+        rm -f /etc/init.d/xray /etc/init.d/cloudflared
     fi
+    
+    log "正在移除二进制文件..."
+    rm -f "$XRAY_BIN" "$CLOUDFLARED_BIN"
+    
+    log "正在移除配置文件目录..."
+    rm -rf "$INSTALL_PATH"
+    
+    log "正在移除节点信息文件..."
+    rm -f "$NODE_INFO_FILE"
+    
+    success "卸载完成！"
+    warn "请注意，脚本依赖 (如 curl, wget, jq) 未被卸载，因为它们可能被其他程序使用。"
+}
 
-    if [ $? -ne 0 ] || [ ! -d "$PROJECT_DIR" ]; then
-        echo -e "${RED}下载失败，请检查网络连接${NC}"
-        exit 1
-    fi
-fi
 
-cd "$PROJECT_DIR"
-
-echo
-
-if [ ! -f "app.py" ]; then
-    echo -e "${RED}未找到app.py文件！${NC}"
-    exit 1
-fi
-
-cp app.py app.py.backup
-echo -e "${YELLOW}已备份原始文件为 app.py.backup${NC}"
-
-if [ "$MODE_CHOICE" = "1" ]; then
-    echo -e "${BLUE}=== 极速模式 ===${NC}"
+# 主菜单
+main_menu() {
+    clear
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}      Xray + Argo VLESS 一键部署脚本     ${NC}"
+    echo -e "${GREEN}========================================${NC}"
     echo
-
-    echo -e "${YELLOW}当前UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)${NC}"
-    read -p "请输入新的 UUID (留空自动生成): " UUID_INPUT
-    if [ -z "$UUID_INPUT" ]; then
-        UUID_INPUT=$(generate_uuid)
-        echo -e "${GREEN}自动生成UUID: $UUID_INPUT${NC}"
-    fi
-
-    sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
-    echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
-
-    sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', 'cloudflare.182682.xyz')/" app.py
-    echo -e "${GREEN}优选IP已自动设置为: cloudflare.182682.xyz${NC}"
-
+    echo -e "${YELLOW}请选择操作:${NC}"
+    echo -e "${BLUE}1) 极速模式 - 自动配置，快速部署${NC}"
+    echo -e "${BLUE}2) 完整模式 - 自定义所有配置项${NC}"
+    echo -e "${BLUE}3) 查看节点信息 - 显示已保存的节点${NC}"
+    echo -e "${RED}4) 卸载脚本 - 移除所有相关文件和服务${NC}"
     echo
-    echo -e "${GREEN}极速配置完成！正在启动服务...${NC}"
-    echo
+    read -p "请输入选择 (1/2/3/4): " MODE_CHOICE
 
-else
-    echo -e "${BLUE}=== 完整配置模式 ===${NC}"
-    echo
+    case $MODE_CHOICE in
+        1) quick_mode ;;
+        2) full_mode ;;
+        3) view_node_info; exit 0 ;;
+        4) uninstall_service; exit 0 ;;
+        *) error "无效输入，请输入 1-4 之间的数字。" ;;
+    esac
+}
 
-    echo -e "${YELLOW}当前UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)${NC}"
-    read -p "请输入新的 UUID (留空自动生成): " UUID_INPUT
-    if [ -z "$UUID_INPUT" ]; then
-        UUID_INPUT=$(generate_uuid)
-        echo -e "${GREEN}自动生成UUID: $UUID_INPUT${NC}"
-    fi
-    sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
-    echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
-
-    echo -e "${YELLOW}当前节点名称: $(grep "NAME = " app.py | head -1 | cut -d"'" -f4)${NC}"
-    read -p "请输入节点名称 (留空保持不变): " NAME_INPUT
-    if [ -n "$NAME_INPUT" ]; then
-        sed -i "s/NAME = os.environ.get('NAME', '[^']*')/NAME = os.environ.get('NAME', '$NAME_INPUT')/" app.py
-        echo -e "${GREEN}节点名称已设置为: $NAME_INPUT${NC}"
-    fi
-
-    echo -e "${YELLOW}当前服务端口: $(grep "PORT = int" app.py | grep -o "or [0-9]*" | cut -d" " -f2)${NC}"
-    read -p "请输入服务端口 (留空保持不变): " PORT_INPUT
-    if [ -n "$PORT_INPUT" ]; then
-        sed -i "s/PORT = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or [0-9]*)/PORT = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or $PORT_INPUT)/" app.py
-        echo -e "${GREEN}端口已设置为: $PORT_INPUT${NC}"
-    fi
-
-    echo -e "${YELLOW}当前优选IP: $(grep "CFIP = " app.py | cut -d"'" -f4)${NC}"
-    read -p "请输入优选IP/域名 (留空使用默认 cloudflare.182682.xyz): " CFIP_INPUT
-    if [ -z "$CFIP_INPUT" ]; then
-        CFIP_INPUT="cloudflare.182682.xyz"
-    fi
-    sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', '$CFIP_INPUT')/" app.py
-    echo -e "${GREEN}优选IP已设置为: $CFIP_INPUT${NC}"
-
-    echo -e "${YELLOW}当前优选端口: $(grep "CFPORT = " app.py | cut -d"'" -f4)${NC}"
-    read -p "请输入优选端口 (留空保持不变): " CFPORT_INPUT
-    if [ -n "$CFPORT_INPUT" ]; then
-        sed -i "s/CFPORT = int(os.environ.get('CFPORT', '[^']*'))/CFPORT = int(os.environ.get('CFPORT', '$CFPORT_INPUT'))/" app.py
-        echo -e "${GREEN}优选端口已设置为: $CFPORT_INPUT${NC}"
-    fi
-
-    echo -e "${YELLOW}当前Argo端口: $(grep "ARGO_PORT = " app.py | cut -d"'" -f4)${NC}"
-    read -p "请输入 Argo 端口 (留空保持不变): " ARGO_PORT_INPUT
-    if [ -n "$ARGO_PORT_INPUT" ]; then
-        sed -i "s/ARGO_PORT = int(os.environ.get('ARGO_PORT', '[^']*'))/ARGO_PORT = int(os.environ.get('ARGO_PORT', '$ARGO_PORT_INPUT'))/" app.py
-        echo -e "${GREEN}Argo端口已设置为: $ARGO_PORT_INPUT${NC}"
-    fi
-
-    echo
-    echo -e "${YELLOW}是否配置高级选项? (y/n)${NC}"
-    read -p "> " ADVANCED_CONFIG
-
-    if [ "$ADVANCED_CONFIG" = "y" ] || [ "$ADVANCED_CONFIG" = "Y" ]; then
-        echo -e "${YELLOW}当前Argo域名: $(grep "ARGO_DOMAIN = " app.py | cut -d"'" -f4)${NC}"
-        read -p "请输入 Argo 固定隧道域名 (留空保持不变): " ARGO_DOMAIN_INPUT
-        if [ -n "$ARGO_DOMAIN_INPUT" ]; then
-            sed -i "s|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '[^']*')|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '$ARGO_DOMAIN_INPUT')|" app.py
-
-            echo -e "${YELLOW}当前Argo密钥: $(grep "ARGO_AUTH = " app.py | cut -d"'" -f4)${NC}"
-            read -p "请输入 Argo 固定隧道密钥: " ARGO_AUTH_INPUT
-            if [ -n "$ARGO_AUTH_INPUT" ]; then
-                sed -i "s|ARGO_AUTH = os.environ.get('ARGO_AUTH', '[^']*')|ARGO_AUTH = os.environ.get('ARGO_AUTH', '$ARGO_AUTH_INPUT')|" app.py
-            fi
-            echo -e "${GREEN}Argo固定隧道配置已设置${NC}"
-        fi
-    fi
-
-    echo -e "${GREEN}完整配置完成！${NC}"
+# --- 脚本入口 ---
+# 如果提供了 -v 参数，直接查看节点信息
+if [ "$1" = "-v" ]; then
+    view_node_info
+    exit 0
 fi
 
-echo -e "${YELLOW}=== 当前配置摘要 ===${NC}"
-echo -e "UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)"
-echo -e "节点名称: $(grep "NAME = " app.py | head -1 | cut -d"'" -f4)"
-echo -e "服务端口: $(grep "PORT = int" app.py | grep -o "or [0-9]*" | cut -d" " -f2)"
-echo -e "优选IP: $(grep "CFIP = " app.py | cut -d"'" -f4)"
-echo -e "优选端口: $(grep "CFPORT = " app.py | cut -d"'" -f4)"
-echo -e "${YELLOW}========================${NC}"
-echo
-
-echo -e "${BLUE}正在启动服务...${NC}"
-echo -e "${YELLOW}当前工作目录：$(pwd)${NC}"
-echo
-
-pkill -f "python3 app.py" > /dev/null 2>&1
-sleep 2
-nohup python3 app.py > app.log 2>&1 &
-APP_PID=$!
-
-if [ -z "$APP_PID" ] || ! ps -p $APP_PID > /dev/null 2>&1; then
-    sleep 2
-    APP_PID=$(pgrep -f "python3 app.py" | head -1)
-    if [ -z "$APP_PID" ]; then
-        echo -e "${RED}服务启动失败，请检查Python环境和日志${NC}"
-        echo -e "${YELLOW}查看日志: tail -f $(pwd)/app.log${NC}"
-        exit 1
-    fi
-fi
-
-echo -e "${GREEN}服务已在后台启动，PID: $APP_PID${NC}"
-echo -e "${YELLOW}日志文件: $(pwd)/app.log${NC}"
-
-echo -e "${BLUE}等待服务启动...${NC}"
-sleep 8
-
-if ! ps -p "$APP_PID" > /dev/null 2>&1; then
-    echo -e "${RED}服务启动失败，请检查日志${NC}"
-    echo -e "${YELLOW}查看日志: tail -f $(pwd)/app.log${NC}"
-    # --- MODIFICATION: netstat to ss ---
-    echo -e "${YELLOW}检查端口占用: ss -tlnp | grep :3000${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}服务运行正常${NC}"
-
-SERVICE_PORT=$(grep "PORT = int" app.py | grep -o "or [0-9]*" | cut -d" " -f2)
-CURRENT_UUID=$(grep "UUID = " app.py | head -1 | cut -d"'" -f2)
-SUB_PATH_VALUE=$(grep "SUB_PATH = " app.py | cut -d"'" -f4)
-
-echo -e "${BLUE}等待节点信息生成...${NC}"
-echo -e "${YELLOW}正在等待Argo隧道建立和节点生成，请耐心等待...${NC}"
-
-MAX_WAIT=600
-WAIT_COUNT=0
-NODE_INFO=""
-
-while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
-    if [ -f ".cache/sub.txt" ]; then
-        NODE_INFO=$(cat .cache/sub.txt 2>/dev/null)
-        if [ -n "$NODE_INFO" ]; then
-            echo -e "${GREEN}节点信息已生成！${NC}"
-            break
-        fi
-    elif [ -f "sub.txt" ]; then
-        NODE_INFO=$(cat sub.txt 2>/dev/null)
-        if [ -n "$NODE_INFO" ]; then
-            echo -e "${GREEN}节点信息已生成！${NC}"
-            break
-        fi
-    fi
-
-    if [ $((WAIT_COUNT % 30)) -eq 0 ]; then
-        MINUTES=$((WAIT_COUNT / 60))
-        SECONDS=$((WAIT_COUNT % 60))
-        echo -e "${YELLOW}已等待 ${MINUTES}分${SECONDS}秒，继续等待节点生成...${NC}"
-    fi
-
-    sleep 5
-    WAIT_COUNT=$((WAIT_COUNT + 5))
-done
-
-if [ -z "$NODE_INFO" ]; then
-    echo -e "${RED}等待超时！节点信息未能在10分钟内生成${NC}"
-    echo -e "${YELLOW}可能原因：${NC}"
-    echo -e "1. 网络连接问题, 2. Argo隧道建立失败, 3. 服务配置错误${NC}"
-    echo -e "${BLUE}建议操作：${NC}"
-    echo -e "1. 查看日志: ${YELLOW}tail -f $(pwd)/app.log${NC}"
-    echo -e "2. 检查服务: ${YELLOW}ps aux | grep python3${NC}"
-    exit 1
-fi
-
-echo
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}           部署完成！                   ${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo
-
-echo -e "${YELLOW}=== 服务信息 ===${NC}"
-echo -e "服务状态: ${GREEN}运行中${NC}"
-echo -e "进程PID: ${BLUE}$APP_PID${NC}"
-echo -e "服务端口: ${BLUE}$SERVICE_PORT${NC}"
-echo -e "UUID: ${BLUE}$CURRENT_UUID${NC}"
-echo
-
-echo -e "${YELLOW}=== 节点信息 ===${NC}"
-DECODED_NODES=$(echo "$NODE_INFO" | base64 -d 2>/dev/null || echo "$NODE_INFO")
-
-echo -e "${GREEN}节点配置:${NC}"
-echo "$DECODED_NODES"
-echo
-
-echo -e "${GREEN}订阅链接:${NC}"
-echo "$NODE_INFO"
-echo
-
-SAVE_INFO="========================================
-           节点信息保存
-========================================
-
-部署时间: $(date)
-UUID: $CURRENT_UUID
-服务端口: $SERVICE_PORT
-订阅路径: /$SUB_PATH_VALUE
-"
-
-if command -v curl &> /dev/null; then
-    PUBLIC_IP=$(curl -s https://api.ipify.org 2>/dev/null || echo "获取失败")
-    if [ "$PUBLIC_IP" != "获取失败" ]; then
-        SAVE_INFO="${SAVE_INFO}
-=== 访问地址 ===
-订阅地址: http://$PUBLIC_IP:$SERVICE_PORT/$SUB_PATH_VALUE
-管理面板: http://$PUBLIC_IP:$SERVICE_PORT
-"
-    fi
-fi
-
-SAVE_INFO="${SAVE_INFO}
-=== 节点信息 ===
-$DECODED_NODES
-
-=== 管理命令 ===
-查看日志: tail -f $(pwd)/app.log
-停止服务: kill $APP_PID
-重启服务: kill $APP_PID && cd $(pwd) && nohup python3 app.py > app.log 2>&1 &
-"
-
-echo "$SAVE_INFO" > "$NODE_INFO_FILE"
-echo -e "${GREEN}节点信息已保存到 $NODE_INFO_FILE${NC}"
-echo -e "${YELLOW}使用 bash $0 -v 可随时查看节点信息${NC}"
-echo
-
-echo -e "${GREEN}部署完成！感谢使用！${NC}"
-
-exit 0
+main_menu
