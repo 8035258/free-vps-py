@@ -270,7 +270,8 @@ show_and_save_result() {
 
         if [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ]; then
             TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z-]*\.trycloudflare\.com')
-        elif [ "$OS_ID" = "alpine" ]; # Alpine日志可能写入/var/log/cloudflared.log，具体取决于版本
+        elif [ "$OS_ID" = "alpine" ]; then
+        # Alpine日志可能写入/var/log/cloudflared.log，具体取决于版本
              TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
         fi
         
