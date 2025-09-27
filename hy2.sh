@@ -65,7 +65,7 @@ openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
 
 # ===== 写入 Hysteria2 配置文件 =====
 cat << EOF > /etc/hysteria/config.yaml
-listen: :$HY2_PORT
+listen: 0.0.0.0:$HY2_PORT
 
 tls:
   cert: /etc/hysteria/server.crt
