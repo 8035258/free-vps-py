@@ -16,7 +16,7 @@ CLOUDFLARED_BIN="/usr/local/bin/cloudflared"
 SINGBOX_URL_BASE="https://github.com/SagerNet/sing-box/releases/latest/download/"
 CLOUDFLARED_URL_BASE="https://github.com/cloudflare/cloudflared/releases/latest/download/"
 # 内部sing-box服务监听的端口
-SINGBOX_PORT="8001" 
+SINGBOX_PORT="8001"
 
 # --- 全局变量 (由用户输入或默认值填充) ---
 UUID=""
@@ -44,7 +44,7 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 generate_uuid() {
     if command -v uuidgen &> /dev/null; then
         uuidgen | tr '[:upper:]' '[:lower:]'
-    elif command -v python3 &> /dev/null; a
+    elif command -v python3 &> /dev/null; then
         python3 -c "import uuid; print(str(uuid.uuid4()))"
     else
         cat /proc/sys/kernel/random/uuid
