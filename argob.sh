@@ -13,7 +13,7 @@ INSTALL_PATH="/etc/sing-box"
 CONFIG_FILE="${INSTALL_PATH}/config.json"
 SINGBOX_BIN="/usr/local/bin/sing-box"
 CLOUDFLARED_BIN="/usr/local/bin/cloudflared"
-SINGBOX_URL_BASE="https://github.com/SagerNet/sing-box/releases/latest/download/"
+# SINGBOX_URL_BASE 不再需要，将动态获取
 CLOUDFLARED_URL_BASE="https://github.com/cloudflare/cloudflared/releases/latest/download/"
 # 内部sing-box服务监听的端口
 SINGBOX_PORT="8001"
@@ -149,31 +149,23 @@ stop_and_disable_services() {
 download_and_install() {
     local name="$1"
     local bin_path="$2"
-    local base_url="$3"
-    local file_pattern="$4"
-    local download_url="${base_url}${file_pattern}"
-    
+    local download_url="$3" # 第三个参数现在是完整的下载URL
+    local file_type="${4:-bin}" # 第四个参数用于判断文件类型
+
     log "正在下载 $name..."
     wget -q -O "/tmp/$name.dl" "$download_url"
     [[ $? -ne 0 ]] && error "$name 下载失败。 URL: $download_url"
 
-    if [[ "$file_pattern" == *.tar.gz ]]; then
+    if [[ "$file_type" == "tar.gz" ]]; then
         log "正在解压并安装 $name..."
         mkdir -p /tmp/install_temp
         tar -xzf "/tmp/$name.dl" -C /tmp/install_temp
-        # sing-box tar.gz 包解压后会有一个带版本号的目录
-        # 使用 find 来定位二进制文件，避免硬编码目录名
         local found_bin=$(find /tmp/install_temp -type f -name "$name")
         if [[ -n "$found_bin" ]]; then
             mv "$found_bin" "$bin_path"
         else
-            error "在下载的 $name压缩包中未找到可执行文件。"
+            error "在下载的 $name 压缩包中未找到可执行文件。"
         fi
-    elif [[ "$file_pattern" == *.zip ]]; then
-         # 保留对旧xray的兼容性（虽然新脚本不用了）
-        log "正在解压并安装 $name..."
-        unzip -q -o "/tmp/$name.dl" -d /tmp/install_temp
-        mv "/tmp/install_temp/$name" "$bin_path"
     else
         log "正在安装 $name..."
         mv "/tmp/$name.dl" "$bin_path"
@@ -425,8 +417,20 @@ run_installation() {
     detect_os_arch
     install_dependencies
     stop_and_disable_services
-    download_and_install "sing-box" "$SINGBOX_BIN" "$SINGBOX_URL_BASE" "sing-box-linux-${ARCH}.tar.gz"
-    download_and_install "cloudflared" "$CLOUDFLARED_BIN" "$CLOUDFLARED_URL_BASE" "cloudflared-linux-${ARCH}"
+
+    # --- 新增: 动态获取 sing-box 下载链接 ---
+    log "正在获取 sing-box 最新版本下载链接..."
+    local SINGBOX_DOWNLOAD_URL
+    SINGBOX_DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r --arg ARCH "$ARCH" '.assets[] | select(.name | endswith("linux-\($ARCH).tar.gz")) | .browser_download_url')
+
+    if [ -z "$SINGBOX_DOWNLOAD_URL" ]; then
+        error "无法自动获取 sing-box 最新下载链接。可能是网络问题或GitHub API限制。请稍后重试。"
+    fi
+    log "已获取最新链接: $SINGBOX_DOWNLOAD_URL"
+    # --- 修改结束 ---
+    
+    download_and_install "sing-box" "$SINGBOX_BIN" "$SINGBOX_DOWNLOAD_URL" "tar.gz"
+    download_and_install "cloudflared" "$CLOUDFLARED_BIN" "${CLOUDFLARED_URL_BASE}cloudflared-linux-${ARCH}" "bin"
     create_config_file
     create_and_enable_service
     show_and_save_result
