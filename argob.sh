@@ -13,7 +13,8 @@ INSTALL_PATH="/etc/sing-box"
 CONFIG_FILE="${INSTALL_PATH}/config.json"
 SINGBOX_BIN="/usr/local/bin/sing-box"
 CLOUDFLARED_BIN="/usr/local/bin/cloudflared"
-CLOUDFLARED_LOG_PATH="/tmp/cloudflared_quick.log" # <--- 新增：用于临时隧道的日志文件路径
+# SINGBOX_URL_BASE 不再需要，将动态获取
+CLOUDFLARED_URL_BASE="https://github.com/cloudflare/cloudflared/releases/latest/download/"
 # 内部sing-box服务监听的端口
 SINGBOX_PORT="8001"
 
@@ -142,8 +143,6 @@ stop_and_disable_services() {
         rc-update del xray default &>/dev/null
         rc-update del cloudflared default &>/dev/null
     fi
-    # 额外清理旧日志文件，避免干扰
-    rm -f $CLOUDFLARED_LOG_PATH
 }
 
 # 下载并安装二进制文件
@@ -220,7 +219,6 @@ EOF
 create_and_enable_service() {
     log "正在创建并启用服务..."
     
-    # 修复点 A：临时隧道的命令结构（保留 tunnel 子命令）
     if [[ -n "$ARGO_AUTH" ]]; then
         CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate run --token ${ARGO_AUTH}"
     else
@@ -240,19 +238,15 @@ Group=root
 [Install]
 WantedBy=multi-user.target
 EOF
-        # 修复点 B：Systemd 中，强制将 cloudflared 输出重定向到 CLOUDFLARED_LOG_PATH
         cat > /etc/systemd/system/cloudflared.service <<EOF
 [Unit]
 Description=Cloudflare Tunnel
 After=network.target
 [Service]
-ExecStart=/bin/bash -c "${CLOUDFLARED_EXEC} > ${CLOUDFLARED_LOG_PATH} 2>&1"
+ExecStart=${CLOUDFLARED_EXEC}
 Restart=on-failure
 User=root
 Group=root
-# 禁用 journalctl 捕获，以确保所有输出都在我们的文件中
-StandardOutput=null
-StandardError=null
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -271,19 +265,20 @@ depend() { need net; }
 EOF
         chmod +x /etc/init.d/sing-box
 
-        # OpenRC/Alpine 使用了正确的 CLOUDFLARED_EXEC
+        # 保留 argob.sh 中对 cloudflared 参数的正确处理
         local CLOUDFLARED_ARGS
         if [[ -n "$ARGO_AUTH" ]]; then
+            # 仅参数部分
             CLOUDFLARED_ARGS="tunnel --no-autoupdate run --token ${ARGO_AUTH}"
         else
+            # 仅参数部分
             CLOUDFLARED_ARGS="tunnel --no-autoupdate --url http://127.0.0.1:${SINGBOX_PORT}"
         fi
 
         cat > /etc/init.d/cloudflared <<EOF
 #!/sbin/openrc-run
 command="${CLOUDFLARED_BIN}"
-# OpenRC 下直接执行命令，其日志通常写入 /var/log/messages
-command_args="${CLOUDFLARED_ARGS}"
+command_args="${CLOUDFLARED_ARGS}" # <--- 使用仅包含参数的变量
 pidfile="/run/\${RC_SVCNAME}.pid"
 name="cloudflared"
 depend() { need net; }
@@ -298,27 +293,6 @@ EOF
     fi
 }
 
-# 定义一个函数来获取 URL (供 show_and_save_result 调用)
-get_tunnel_url() {
-    local systemd_system=false
-    if [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "rhel" ]; then
-        systemd_system=true
-    fi
-    
-    # 使用 sed 精确提取完整的 https://... URL
-    if $systemd_system; then
-        # Systemd: 从我们指定的临时文件中获取
-        grep "trycloudflare.com" ${CLOUDFLARED_LOG_PATH} 2>/dev/null | \
-        sed -n 's/.*\(https:\/\/[a-z0-9-]*\.trycloudflare\.com\).*/\1/p' | \
-        tail -n 1
-    else
-        # OpenRC/其他: 从 /var/log/messages 或 cloudflared.log 中获取
-        grep "trycloudflare.com" /var/log/messages /var/log/cloudflared.log 2>/dev/null | \
-        sed -n 's/.*\(https:\/\/[a-z0-9-]*\.trycloudflare\.com\).*/\1/p' | \
-        tail -n 1
-    fi
-}
-
 # 显示并保存结果
 show_and_save_result() {
     local final_domain="$ARGO_DOMAIN"
@@ -330,22 +304,27 @@ show_and_save_result() {
 
     if [[ -z "$final_domain" ]]; then
         log "使用临时隧道，正在获取隧道域名..."
-        # 初始等待时间，确保 cloudflared 有足够时间启动并生成域名
         sleep 10 
 
-        # 修复点 C：使用 get_tunnel_url 函数获取域名
-        TUNNEL_URL=$(get_tunnel_url)
+        if $systemd_system; then
+            TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -n 1)
+        else
+             TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
+        fi
         
         retries=0
-        while [ -z "$TUNNEL_URL" ] && [ $retries -lt 8 ]; do
+        while [ -z "$TUNNEL_URL" ] && [ $retries -lt 5 ]; do
             warn "未能获取到域名，5秒后重试... (尝试次数: $((retries+1)))"
             sleep 5
-            # 重试时再次调用提取逻辑
-            TUNNEL_URL=$(get_tunnel_url) 
+            if $systemd_system; then
+                TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -n 1)
+            else
+                TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
+            fi
             ((retries++))
         done
         
-        [[ -z "$TUNNEL_URL" ]] && error "无法获取 Cloudflare Tunnel 域名，请检查 cloudflared 服务状态和日志。日志文件路径: ${CLOUDFLARED_LOG_PATH}"
+        [[ -z "$TUNNEL_URL" ]] && error "无法获取 Cloudflare Tunnel 域名，请检查 cloudflared 服务状态和日志。"
         final_domain=$(echo "$TUNNEL_URL" | sed 's|https://||')
     fi
     
@@ -370,7 +349,7 @@ ${VLESS_LINK}
 查看节点: bash $0 -v
 重启服务 (systemd): systemctl restart sing-box cloudflared
 重启服务 (OpenRC): rc-service sing-box restart && rc-service cloudflared restart
-查看日志 (Systemd 临时): tail -f ${CLOUDFLARED_LOG_PATH}
+查看日志 (systemd): journalctl -u sing-box -f & journalctl -u cloudflared -f
 查看日志 (OpenRC): tail -f /var/log/messages
 ========================================"
 
@@ -464,7 +443,7 @@ run_installation() {
     # --- 修改结束 ---
     
     download_and_install "sing-box" "$SINGBOX_BIN" "$SINGBOX_DOWNLOAD_URL" "tar.gz"
-    download_and_install "cloudflared" "$CLOUDFLARED_BIN" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}" "bin"
+    download_and_install "cloudflared" "$CLOUDFLARED_BIN" "${CLOUDFLARED_URL_BASE}cloudflared-linux-${ARCH}" "bin"
     create_config_file
     create_and_enable_service
     show_and_save_result
@@ -506,9 +485,6 @@ uninstall_service() {
     
     log "正在移除节点信息文件..."
     rm -f "$NODE_INFO_FILE"
-    
-    # 额外移除临时日志文件
-    rm -f $CLOUDFLARED_LOG_PATH
     
     success "卸载完成！"
 }
