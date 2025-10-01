@@ -93,6 +93,7 @@ install_dependencies() {
 # 自动获取最新版本号
 get_latest_version() {
     local repo="$1"
+    # 获取完整的 tag，例如 v1.12.8
     local version=$(curl -sL "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     if [ -z "$version" ]; then
         error "无法从 GitHub 获取 ${repo} 的最新版本，请检查网络连接。"
@@ -104,6 +105,7 @@ get_latest_version() {
 download_singbox() {
     log "正在下载 Sing-box 二进制文件..."
     local version_tag=$(get_latest_version "SagerNet/sing-box") # 例如 v1.12.8
+    local version_num=$(echo "$version_tag" | sed 's/^v//') # 移除 v 前缀，例如 1.12.8
 
     local arch=$(uname -m)
     local arch_pattern=""
@@ -115,26 +117,25 @@ download_singbox() {
         *) error "不支持的架构：$arch" ;;
     esac
 
-    # 1. 从 Release 页面获取正确的文件名
-    local asset_name=$(curl -sL "https://api.github.com/repos/SagerNet/sing-box/releases/tags/${version_tag}" | \
-        grep "browser_download_url" | \
-        grep "${arch_pattern}" | \
-        grep "tar.gz" | \
-        head -n 1 | \
-        awk -F'/' '{print $NF}')
-
-    if [ -z "$asset_name" ]; then
-        error "无法找到与您的架构 (${arch_pattern}) 匹配的 Sing-box 压缩包文件。"
-    fi
-
-    local url="https://github.com/SagerNet/sing-box/releases/download/${version_tag}/${asset_name}"
+    # 核心修复：文件名通常不带 v
+    local file_name="sing-box-${version_num}-${arch_pattern}.tar.gz" 
     
-    log "下载链接: $url"
+    # 路径使用完整的 version_tag (带 v)
+    local url="https://github.com/SagerNet/sing-box/releases/download/${version_tag}/${file_name}"
+    
+    log "下载链接 (使用不带v的文件名): $url"
     
     # 使用 -f 确保失败时 curl 返回非 0 状态
     if ! curl -fL "$url" -o sing-box.tar.gz; then
-        rm -f sing-box.tar.gz
-        error "下载 Sing-box 失败，请检查网络或 URL。"
+        # 再次尝试一种备用命名 (文件名也带 v)
+        file_name="sing-box-${version_tag}-${arch_pattern}.tar.gz"
+        url="https://github.com/SagerNet/sing-box/releases/download/${version_tag}/${file_name}"
+        log "尝试备用链接 (使用带v的文件名): $url"
+        
+        if ! curl -fL "$url" -o sing-box.tar.gz; then
+            rm -f sing-box.tar.gz
+            error "下载 Sing-box 失败，请检查网络或 URL。"
+        fi
     fi
 
     # 尝试解压
@@ -143,7 +144,7 @@ download_singbox() {
         error "解压 Sing-box 文件失败。下载的文件可能已损坏。"
     fi
     
-    # 查找并移动 sing-box 可执行文件，它可能位于不同结构的文件夹中
+    # 查找并移动 sing-box 可执行文件
     local success_move=false
     local extracted_dir=$(tar -tf sing-box.tar.gz | head -n 1 | awk -F/ '{print $1}')
     
