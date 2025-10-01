@@ -100,24 +100,26 @@ get_latest_version() {
     echo "$version"
 }
 
-# 下载 Sing-box
+# 下载 Sing-box (已修复 404 错误)
 download_singbox() {
     log "正在下载 Sing-box 二进制文件..."
-    local version=$(get_latest_version "SagerNet/sing-box")
+    local version_tag=$(get_latest_version "SagerNet/sing-box") # 例如 v1.12.8
+    local version_num=$(echo "$version_tag" | sed 's/^v//') # 移除 v 前缀，例如 1.12.8
 
     local arch=$(uname -m)
     local file_name=""
     local bin_folder_name=""
 
     case $arch in
-        x86_64) file_name="sing-box-${version}-linux-amd64"; bin_folder_name="sing-box-${version}" ;;
-        aarch64) file_name="sing-box-${version}-linux-arm64"; bin_folder_name="sing-box-${version}" ;;
-        armv7l) file_name="sing-box-${version}-linux-armv7"; bin_folder_name="sing-box-${version}" ;;
-        i686) file_name="sing-box-${version}-linux-386"; bin_folder_name="sing-box-${version}" ;;
+        x86_64) file_name="sing-box-${version_num}-linux-amd64"; bin_folder_name="sing-box-${version_tag}" ;;
+        aarch64) file_name="sing-box-${version_num}-linux-arm64"; bin_folder_name="sing-box-${version_tag}" ;;
+        armv7l) file_name="sing-box-${version_num}-linux-armv7"; bin_folder_name="sing-box-${version_tag}" ;;
+        i686) file_name="sing-box-${version_num}-linux-386"; bin_folder_name="sing-box-${version_tag}" ;;
         *) error "不支持的架构：$arch" ;;
     esac
 
-    local url="https://github.com/SagerNet/sing-box/releases/download/${version}/${file_name}.tar.gz"
+    # 修复 URL 构造：使用 version_tag 作为路径，但使用 file_name 作为实际文件名
+    local url="https://github.com/SagerNet/sing-box/releases/download/${version_tag}/${file_name}.tar.gz"
     
     # 使用 -f 确保失败时 curl 返回非 0 状态
     if ! curl -fL "$url" -o sing-box.tar.gz; then
@@ -130,19 +132,23 @@ download_singbox() {
         error "解压 Sing-box 文件失败。下载的文件可能已损坏。"
     fi
     
-    # 移动文件 (Sing-box的压缩包结构可能有所不同，通常是 sing-box-vX.X.X/sing-box)
+    # 移动文件 (Sing-box的压缩包结构可能有所不同)
     if [ -f "${file_name}/sing-box" ]; then
         mv "${file_name}/sing-box" "$SINGBOX_BIN"
     elif [ -f "${bin_folder_name}/sing-box" ]; then
+        # 兼容例如 sing-box-v1.12.8/sing-box 这种结构
         mv "${bin_folder_name}/sing-box" "$SINGBOX_BIN"
+    elif [ -f "sing-box-${version_tag}/sing-box" ]; then
+        # 再次尝试一种常见的文件夹名
+        mv "sing-box-${version_tag}/sing-box" "$SINGBOX_BIN"
     else
-        rm -rf "${file_name}" "${bin_folder_name}" sing-box.tar.gz
+        rm -rf "${file_name}" "${bin_folder_name}" "sing-box-${version_tag}" sing-box.tar.gz
         error "在压缩包中找不到 sing-box 可执行文件。"
     fi
 
     chmod +x "$SINGBOX_BIN"
-    rm -rf sing-box.tar.gz "${file_name}" "${bin_folder_name}"
-    success "Sing-box ${version} 安装完成。"
+    rm -rf sing-box.tar.gz "${file_name}" "${bin_folder_name}" "sing-box-${version_tag}"
+    success "Sing-box ${version_tag} 安装完成。"
 }
 
 # 下载 cloudflared
