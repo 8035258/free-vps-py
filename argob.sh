@@ -304,10 +304,10 @@ show_and_save_result() {
 
     if [[ -z "$final_domain" ]]; then
         log "使用临时隧道，正在获取隧道域名..."
-        sleep 15 
+        sleep 10 
 
         if $systemd_system; then
-            TUNNEL_URL=$(journalctl -u cloudflared -n 30 --no-pager | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -n 1)
+            TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -n 1)
         else
              TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
         fi
@@ -315,9 +315,9 @@ show_and_save_result() {
         retries=0
         while [ -z "$TUNNEL_URL" ] && [ $retries -lt 8 ]; do
             warn "未能获取到域名，5秒后重试... (尝试次数: $((retries+1)))"
-            sleep 8
+            sleep 5
             if $systemd_system; then
-                TUNNEL_URL=$(journalctl -u cloudflared -n 30 --no-pager | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -n 1)
+                TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -n 1)
             else
                 TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
             fi
