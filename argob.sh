@@ -254,30 +254,44 @@ EOF
         systemctl enable sing-box cloudflared
         systemctl restart sing-box cloudflared
 elif [ "$OS_ID" = "alpine" ]; then
-        # ... (sing-box service creation, keep as is) ...
-        
-        # 修正 CLOUDFLARED_EXEC，只保留参数部分
+        # 补充：创建 sing-box OpenRC 服务文件
+        cat > /etc/init.d/sing-box <<EOF
+#!/sbin/openrc-run
+command="${SINGBOX_BIN}"
+command_args="run -c ${CONFIG_FILE}"
+pidfile="/run/\${RC_SVCNAME}.pid"
+name="sing-box"
+depend() { need net; }
+EOF
+        chmod +x /etc/init.d/sing-box
+
+        # 保留 argob.sh 中对 cloudflared 参数的正确处理
         local CLOUDFLARED_ARGS
         if [[ -n "$ARGO_AUTH" ]]; then
+            # 仅参数部分
             CLOUDFLARED_ARGS="tunnel --no-autoupdate run --token ${ARGO_AUTH}"
         else
+            # 仅参数部分
             CLOUDFLARED_ARGS="tunnel --no-autoupdate --url http://127.0.0.1:${SINGBOX_PORT}"
         fi
 
         cat > /etc/init.d/cloudflared <<EOF
 #!/sbin/openrc-run
 command="${CLOUDFLARED_BIN}"
-command_args="${CLOUDFLARED_ARGS}" # <--- 使用修正后的变量
+command_args="${CLOUDFLARED_ARGS}" # <--- 使用仅包含参数的变量
 pidfile="/run/\${RC_SVCNAME}.pid"
 name="cloudflared"
 depend() { need net; }
 EOF
         chmod +x /etc/init.d/cloudflared
+        
+        # 启动和启用服务
         rc-update add sing-box default
         rc-update add cloudflared default
         rc-service sing-box restart >/dev/null 2>&1 &
         rc-service cloudflared restart >/dev/null 2>&1 &
     fi
+}
 
 # 显示并保存结果
 show_and_save_result() {
