@@ -222,7 +222,7 @@ create_and_enable_service() {
     if [[ -n "$ARGO_AUTH" ]]; then
         CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate run --token ${ARGO_AUTH}"
     else
-        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} --no-autoupdate --url http://127.0.0.1:${SINGBOX_PORT}"
+        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate --url http://127.0.0.1:${SINGBOX_PORT}"
     fi
 
     if [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "rhel" ]; then
@@ -304,22 +304,22 @@ show_and_save_result() {
 
     if [[ -z "$final_domain" ]]; then
         log "使用临时隧道，正在获取隧道域名..."
-        sleep 10 
+        sleep 15 
 
         if $systemd_system; then
-            TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -n 1)
+            TUNNEL_URL=$(journalctl -u cloudflared -n 50 --no-pager 2>/dev/null | grep "trycloudflare.com" | sed -n 's/.*\(https:\/\/[a-z0-9-]*\.trycloudflare\.com\).*/\1/p' | tail -n 1)
         else
-             TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
+             TUNNEL_URL=$(grep "trycloudflare.com" /var/log/messages /var/log/cloudflared.log 2>/dev/null | sed -n 's/.*\(https:\/\/[a-z0-9-]*\.trycloudflare\.com\).*/\1/p' | tail -n 1)
         fi
         
         retries=0
-        while [ -z "$TUNNEL_URL" ] && [ $retries -lt 8 ]; do
+        while [ -z "$TUNNEL_URL" ] && [ $retries -lt 5 ]; do
             warn "未能获取到域名，5秒后重试... (尝试次数: $((retries+1)))"
-            sleep 5
+            sleep 8
             if $systemd_system; then
-                TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -n 1)
+                TUNNEL_URL=$(journalctl -u cloudflared -n 50 --no-pager 2>/dev/null | grep "trycloudflare.com" | sed -n 's/.*\(https:\/\/[a-z0-9-]*\.trycloudflare\.com\).*/\1/p' | tail -n 1)
             else
-                TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
+                TUNNEL_URL=$(grep "trycloudflare.com" /var/log/messages /var/log/cloudflared.log 2>/dev/null | sed -n 's/.*\(https:\/\/[a-z0-9-]*\.trycloudflare\.com\).*/\1/p' | tail -n 1)
             fi
             ((retries++))
         done
