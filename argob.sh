@@ -100,29 +100,40 @@ get_latest_version() {
     echo "$version"
 }
 
-# 下载 Sing-box (已修复 404 错误)
+# 下载 Sing-box (最终修复下载逻辑)
 download_singbox() {
     log "正在下载 Sing-box 二进制文件..."
     local version_tag=$(get_latest_version "SagerNet/sing-box") # 例如 v1.12.8
-    local version_num=$(echo "$version_tag" | sed 's/^v//') # 移除 v 前缀，例如 1.12.8
 
     local arch=$(uname -m)
-    local file_name=""
-    local bin_folder_name=""
-
+    local arch_pattern=""
     case $arch in
-        x86_64) file_name="sing-box-${version_num}-linux-amd64"; bin_folder_name="sing-box-${version_tag}" ;;
-        aarch64) file_name="sing-box-${version_num}-linux-arm64"; bin_folder_name="sing-box-${version_tag}" ;;
-        armv7l) file_name="sing-box-${version_num}-linux-armv7"; bin_folder_name="sing-box-${version_tag}" ;;
-        i686) file_name="sing-box-${version_num}-linux-386"; bin_folder_name="sing-box-${version_tag}" ;;
+        x86_64) arch_pattern="linux-amd64" ;;
+        aarch64) arch_pattern="linux-arm64" ;;
+        armv7l) arch_pattern="linux-armv7" ;;
+        i686) arch_pattern="linux-386" ;;
         *) error "不支持的架构：$arch" ;;
     esac
 
-    # 修复 URL 构造：使用 version_tag 作为路径，但使用 file_name 作为实际文件名
-    local url="https://github.com/SagerNet/sing-box/releases/download/${version_tag}/${file_name}.tar.gz"
+    # 1. 从 Release 页面获取正确的文件名
+    local asset_name=$(curl -sL "https://api.github.com/repos/SagerNet/sing-box/releases/tags/${version_tag}" | \
+        grep "browser_download_url" | \
+        grep "${arch_pattern}" | \
+        grep "tar.gz" | \
+        head -n 1 | \
+        awk -F'/' '{print $NF}')
+
+    if [ -z "$asset_name" ]; then
+        error "无法找到与您的架构 (${arch_pattern}) 匹配的 Sing-box 压缩包文件。"
+    fi
+
+    local url="https://github.com/SagerNet/sing-box/releases/download/${version_tag}/${asset_name}"
+    
+    log "下载链接: $url"
     
     # 使用 -f 确保失败时 curl 返回非 0 状态
     if ! curl -fL "$url" -o sing-box.tar.gz; then
+        rm -f sing-box.tar.gz
         error "下载 Sing-box 失败，请检查网络或 URL。"
     fi
 
@@ -132,22 +143,22 @@ download_singbox() {
         error "解压 Sing-box 文件失败。下载的文件可能已损坏。"
     fi
     
-    # 移动文件 (Sing-box的压缩包结构可能有所不同)
-    if [ -f "${file_name}/sing-box" ]; then
-        mv "${file_name}/sing-box" "$SINGBOX_BIN"
-    elif [ -f "${bin_folder_name}/sing-box" ]; then
-        # 兼容例如 sing-box-v1.12.8/sing-box 这种结构
-        mv "${bin_folder_name}/sing-box" "$SINGBOX_BIN"
-    elif [ -f "sing-box-${version_tag}/sing-box" ]; then
-        # 再次尝试一种常见的文件夹名
-        mv "sing-box-${version_tag}/sing-box" "$SINGBOX_BIN"
-    else
-        rm -rf "${file_name}" "${bin_folder_name}" "sing-box-${version_tag}" sing-box.tar.gz
+    # 查找并移动 sing-box 可执行文件，它可能位于不同结构的文件夹中
+    local success_move=false
+    local extracted_dir=$(tar -tf sing-box.tar.gz | head -n 1 | awk -F/ '{print $1}')
+    
+    if [ -f "${extracted_dir}/sing-box" ]; then
+        mv "${extracted_dir}/sing-box" "$SINGBOX_BIN"
+        success_move=true
+    fi
+
+    if ! $success_move; then
+        rm -rf sing-box.tar.gz "${extracted_dir}"
         error "在压缩包中找不到 sing-box 可执行文件。"
     fi
 
     chmod +x "$SINGBOX_BIN"
-    rm -rf sing-box.tar.gz "${file_name}" "${bin_folder_name}" "sing-box-${version_tag}"
+    rm -rf sing-box.tar.gz "${extracted_dir}"
     success "Sing-box ${version_tag} 安装完成。"
 }
 
