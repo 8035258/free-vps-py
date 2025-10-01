@@ -24,6 +24,7 @@ CFIP="cloudflare.182682.xyz"
 CFPORT="443"
 ARGO_DOMAIN=""
 ARGO_AUTH=""
+INIT_SYSTEM="" # 用于记录系统初始化系统 (systemd/openrc)
 
 
 # =================================================================
@@ -39,7 +40,7 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 # 打印错误信息
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-# 检查Linux发行版和包管理器
+# 检查Linux发行版、包管理器和初始化系统
 check_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -56,61 +57,91 @@ check_os() {
     else
         error "无法确定操作系统类型"
     fi
+    
+    # 检查初始化系统
+    if command -v systemctl &> /dev/null; then
+        INIT_SYSTEM="systemd"
+    elif command -v rc-service &> /dev/null; then
+        INIT_SYSTEM="openrc"
+    else
+        warn "未检测到 systemd 或 openrc，服务将无法自动管理。请手动配置。"
+    fi
 }
 
 # 安装依赖
 install_dependencies() {
-    log "正在安装依赖：curl, systemctl (如果缺失)..."
+    log "正在安装依赖：curl, tar, unzip, $INIT_SYSTEM 相关工具..."
+    
     if [ "$PKG_MANAGER" == "apt" ]; then
         apt update >/dev/null 2>&1
-        apt -y install curl systemctl >/dev/null 2>&1
+        apt -y install curl tar gzip unzip systemd >/dev/null 2>&1
     elif [ "$PKG_MANAGER" == "yum" ]; then
-        yum -y install curl systemd >/dev/null 2>&1
+        yum -y install curl tar gzip unzip systemd >/dev/null 2>&1
     elif [ "$PKG_MANAGER" == "apk" ]; then
         apk update >/dev/null 2>&1
-        apk add curl openrc >/dev/null 2>&1
+        apk add curl tar gzip unzip openrc >/dev/null 2>&1
     fi
-    if ! command -v curl &> /dev/null; then
-        error "无法安装 curl，请手动安装后重试。"
+    
+    # 再次确认关键工具
+    if ! command -v curl &> /dev/null || ! command -v tar &> /dev/null || ! command -v unzip &> /dev/null; then
+        error "无法安装必要的依赖 (curl, tar, unzip)，请手动安装后重试。"
     fi
+    
     success "依赖安装完成。"
 }
 
 # 自动获取最新版本号
 get_latest_version() {
     local repo="$1"
-    curl -sL "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+    local version=$(curl -sL "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [ -z "$version" ]; then
+        error "无法从 GitHub 获取 ${repo} 的最新版本，请检查网络连接。"
+    fi
+    echo "$version"
 }
 
 # 下载 Sing-box
 download_singbox() {
     log "正在下载 Sing-box 二进制文件..."
     local version=$(get_latest_version "SagerNet/sing-box")
-    if [ -z "$version" ]; then
-        warn "无法获取 Sing-box 最新版本，使用默认版本 v1.8.0"
-        version="v1.8.0"
-    fi
 
     local arch=$(uname -m)
     local file_name=""
+    local bin_folder_name=""
+
     case $arch in
-        x86_64) file_name="sing-box-${version}-linux-amd64" ;;
-        aarch64) file_name="sing-box-${version}-linux-arm64" ;;
-        armv7l) file_name="sing-box-${version}-linux-armv7" ;;
-        i686) file_name="sing-box-${version}-linux-386" ;;
+        x86_64) file_name="sing-box-${version}-linux-amd64"; bin_folder_name="sing-box-${version}" ;;
+        aarch64) file_name="sing-box-${version}-linux-arm64"; bin_folder_name="sing-box-${version}" ;;
+        armv7l) file_name="sing-box-${version}-linux-armv7"; bin_folder_name="sing-box-${version}" ;;
+        i686) file_name="sing-box-${version}-linux-386"; bin_folder_name="sing-box-${version}" ;;
         *) error "不支持的架构：$arch" ;;
     esac
 
     local url="https://github.com/SagerNet/sing-box/releases/download/${version}/${file_name}.tar.gz"
     
-    if ! curl -L "$url" -o sing-box.tar.gz; then
-        error "下载 Sing-box 失败，请检查网络或版本。"
+    # 使用 -f 确保失败时 curl 返回非 0 状态
+    if ! curl -fL "$url" -o sing-box.tar.gz; then
+        error "下载 Sing-box 失败，请检查网络或 URL。"
     fi
 
-    tar -xzf sing-box.tar.gz
-    mv "${file_name}"/sing-box "$SINGBOX_BIN"
+    # 尝试解压
+    if ! tar -xzf sing-box.tar.gz; then
+        rm -f sing-box.tar.gz
+        error "解压 Sing-box 文件失败。下载的文件可能已损坏。"
+    fi
+    
+    # 移动文件 (Sing-box的压缩包结构可能有所不同，通常是 sing-box-vX.X.X/sing-box)
+    if [ -f "${file_name}/sing-box" ]; then
+        mv "${file_name}/sing-box" "$SINGBOX_BIN"
+    elif [ -f "${bin_folder_name}/sing-box" ]; then
+        mv "${bin_folder_name}/sing-box" "$SINGBOX_BIN"
+    else
+        rm -rf "${file_name}" "${bin_folder_name}" sing-box.tar.gz
+        error "在压缩包中找不到 sing-box 可执行文件。"
+    fi
+
     chmod +x "$SINGBOX_BIN"
-    rm -rf sing-box.tar.gz "${file_name}"
+    rm -rf sing-box.tar.gz "${file_name}" "${bin_folder_name}"
     success "Sing-box ${version} 安装完成。"
 }
 
@@ -129,8 +160,8 @@ download_cloudflared() {
 
     local url="${CLOUDFLARED_URL_BASE}${file_name}"
     
-    if ! curl -L "$url" -o "$CLOUDFLARED_BIN"; then
-        error "下载 cloudflared 失败，请检查网络。"
+    if ! curl -fL "$url" -o "$CLOUDFLARED_BIN"; then
+        error "下载 cloudflared 失败，请检查网络或 URL。"
     fi
 
     chmod +x "$CLOUDFLARED_BIN"
@@ -141,6 +172,10 @@ download_cloudflared() {
 # 生成 Sing-box 配置 (VLESS + WS 监听本地端口)
 generate_singbox_config() {
     log "正在生成 Sing-box 配置文件..."
+    
+    # 确保路径中 / 是被转义的
+    local WS_PATH="/${UUID}-path"
+    
     # VLESS + WS 监听本地环回地址和端口
     cat > "$CONFIG_FILE" <<EOF
 {
@@ -164,7 +199,7 @@ generate_singbox_config() {
         "network": "ws",
         "security": "none",
         "ws_options": {
-          "path": "/$UUID-path",
+          "path": "$WS_PATH",
           "headers": {
             "Host": "$ARGO_DOMAIN"
           }
@@ -195,43 +230,22 @@ EOF
     success "Sing-box 配置生成完成，监听端口: $SINGBOX_PORT"
 }
 
-# 安装 Sing-box 服务
-install_singbox_service() {
-    log "正在创建和安装 Sing-box Systemd 服务..."
-    # 假设使用 systemd
-    cat > /etc/systemd/system/sing-box.service <<EOF
+# 安装和启用服务 (兼容 Systemd 和 OpenRC)
+install_and_enable_service() {
+    local service_name="$1"
+    local exec_command="$2"
+    local after_target="$3" # Systemd only
+
+    if [ "$INIT_SYSTEM" == "systemd" ]; then
+        log "正在创建和安装 ${service_name}.service (Systemd)..."
+        cat > "/etc/systemd/system/${service_name}.service" <<EOF
 [Unit]
-Description=Sing-box Service
-After=network.target
+Description=${service_name} Service
+After=network.target ${after_target}
 
 [Service]
 Type=simple
-ExecStart=$SINGBOX_BIN run -C $INSTALL_PATH
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW
-AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable sing-box.service >/dev/null 2>&1
-    success "Sing-box 服务安装完成。"
-}
-
-# 安装 cloudflared 服务 (使用 Token 模式)
-install_cloudflared_service() {
-    log "正在创建和安装 cloudflared Systemd 服务 (使用 Token 模式)..."
-    # 使用 --token 启动 Argo 隧道，转发到 Sing-box 的本地端口
-    cat > /etc/systemd/system/cloudflared.service <<EOF
-[Unit]
-Description=Cloudflare Tunnel Service
-After=network.target sing-box.service
-
-[Service]
-ExecStart=$CLOUDFLARED_BIN tunnel --no-autoupdate --token $ARGO_AUTH --url http://127.0.0.1:$SINGBOX_PORT
+ExecStart=${exec_command}
 Restart=on-failure
 RestartSec=5s
 User=root
@@ -239,57 +253,59 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
+        systemctl daemon-reload
+        systemctl enable "${service_name}.service" >/dev/null 2>&1
+    elif [ "$INIT_SYSTEM" == "openrc" ]; then
+        log "正在创建和安装 ${service_name} (OpenRC)..."
+        # 针对 OpenRC 系统的服务脚本
+        cat > "/etc/init.d/${service_name}" <<EOF
+#!/sbin/openrc-run
 
-    systemctl daemon-reload
-    systemctl enable cloudflared.service >/dev/null 2>&1
-    success "cloudflared 服务安装完成。"
-}
-
-# 收集用户输入
-collect_user_input() {
-    # 1. UUID
-    UUID=$(cat /proc/sys/kernel/random/uuid)
-    echo -e "${YELLOW}生成的 UUID: ${GREEN}$UUID${NC}"
-    read -p "是否使用此 UUID？(y/n，默认 y): " use_default_uuid
-    if [[ "$use_default_uuid" == [nN] ]]; then
-        read -p "请输入自定义 UUID: " UUID
+name="${service_name} Service"
+command="${exec_command}"
+command_args=""
+pidfile="/var/run/${service_name}.pid"
+depend() {
+    need localmount net
+    # OpenRC 不支持精细的 After 依赖，但可以设置启动顺序
+    if [ "$service_name" == "cloudflared" ]; then
+        use sing-box
     fi
-    [ -z "$UUID" ] && error "UUID 不能为空！"
-
-    # 2. Argo 域名
-    echo
-    echo -e "${YELLOW}接下来需要输入您的 Cloudflare 域名配置。${NC}"
-    echo -e "您必须预先在 Cloudflare 创建 Tunnel 并将其 CNAME 记录指向您的域名。"
-    read -p "请输入您的自定义 Argo 域名 (例如: vless.example.com): " ARGO_DOMAIN
-    [ -z "$ARGO_DOMAIN" ] && error "Argo 域名不能为空！"
-
-    # 3. Argo Token
-    echo -e "Argo Token 可以在 Cloudflare Tunnel 管理界面找到。"
-    read -p "请输入您的 Argo Tunnel Token: " ARGO_AUTH
-    [ -z "$ARGO_AUTH" ] && error "Argo Token 不能为空！"
-    
-    # 4. 节点名称
-    echo
-    read -p "请输入节点名称 (默认: $NODE_NAME): " input_name
-    [ -n "$input_name" ] && NODE_NAME="$input_name"
-    
-    # 5. CF 优选 IP
-    echo
-    read -p "请输入 VLESS 客户端使用的 Cloudflare 优选 IP (默认: $CFIP): " input_cfip
-    [ -n "$input_cfip" ] && CFIP="$input_cfip"
 }
+EOF
+        chmod +x "/etc/init.d/${service_name}"
+        rc-update add "${service_name}" default >/dev/null 2>&1
+    else
+        warn "未找到初始化系统，跳过服务安装。"
+        return 1
+    fi
+    success "${service_name} 服务安装完成。"
+}
+
 
 # 启动服务
 start_services() {
     log "正在启动 Sing-box 服务..."
-    systemctl start sing-box.service
-    log "正在启动 cloudflared 服务..."
-    systemctl start cloudflared.service
-    sleep 3 # 等待服务启动
-    if systemctl is-active --quiet sing-box.service && systemctl is-active --quiet cloudflared.service; then
-        success "Sing-box 和 cloudflared 服务已成功启动！"
+    if [ "$INIT_SYSTEM" == "systemd" ]; then
+        systemctl start sing-box.service
+        systemctl start cloudflared.service
+        sleep 3 # 等待服务启动
+        if systemctl is-active --quiet sing-box.service && systemctl is-active --quiet cloudflared.service; then
+            success "Sing-box 和 cloudflared 服务已成功启动！"
+        else
+            error "服务启动失败，请检查日志 (journalctl -u sing-box.service / cloudflared.service)"
+        fi
+    elif [ "$INIT_SYSTEM" == "openrc" ]; then
+        rc-service sing-box start
+        rc-service cloudflared start
+        sleep 3
+        if rc-service sing-box status && rc-service cloudflared status; then
+            success "Sing-box 和 cloudflared 服务已成功启动！"
+        else
+            error "服务启动失败，请检查日志 (/var/log/messages 或 /var/log/syslog)"
+        fi
     else
-        error "服务启动失败，请检查日志 (journalctl -u sing-box.service / cloudflared.service)"
+        warn "请手动运行服务: $SINGBOX_BIN run -C $INSTALL_PATH 和 $CLOUDFLARED_BIN tunnel --no-autoupdate --token $ARGO_AUTH --url http://127.0.0.1:$SINGBOX_PORT"
     fi
 }
 
@@ -333,6 +349,40 @@ $vless_link_non_tls
 EOF
 }
 
+# 收集用户输入
+collect_user_input() {
+    # 1. UUID
+    UUID=$(cat /proc/sys/kernel/random/uuid)
+    echo -e "${YELLOW}生成的 UUID: ${GREEN}$UUID${NC}"
+    read -p "是否使用此 UUID？(y/n，默认 y): " use_default_uuid
+    if [[ "$use_default_uuid" == [nN] ]]; then
+        read -p "请输入自定义 UUID: " UUID
+    fi
+    [ -z "$UUID" ] && error "UUID 不能为空！"
+
+    # 2. Argo 域名
+    echo
+    echo -e "${YELLOW}接下来需要输入您的 Cloudflare 域名配置。${NC}"
+    echo -e "您必须预先在 Cloudflare 创建 Tunnel 并将其 CNAME 记录指向您的域名。"
+    read -p "请输入您的自定义 Argo 域名 (例如: vless.example.com): " ARGO_DOMAIN
+    [ -z "$ARGO_DOMAIN" ] && error "Argo 域名不能为空！"
+
+    # 3. Argo Token
+    echo -e "Argo Token 可以在 Cloudflare Tunnel 管理界面找到。"
+    read -p "请输入您的 Argo Tunnel Token: " ARGO_AUTH
+    [ -z "$ARGO_AUTH" ] && error "Argo Token 不能为空！"
+    
+    # 4. 节点名称
+    echo
+    read -p "请输入节点名称 (默认: $NODE_NAME): " input_name
+    [ -n "$input_name" ] && NODE_NAME="$input_name"
+    
+    # 5. CF 优选 IP
+    echo
+    read -p "请输入 VLESS 客户端使用的 Cloudflare 优选 IP (默认: $CFIP): " input_cfip
+    [ -n "$input_cfip" ] && CFIP="$input_cfip"
+}
+
 # 安装主函数
 install_node() {
     # 0. 检查系统并安装依赖
@@ -342,19 +392,19 @@ install_node() {
     # 1. 收集用户输入
     collect_user_input
 
-    # 2. 下载二进制文件
+    # 2. 下载二进制文件 (已修复下载逻辑)
     download_singbox
     download_cloudflared
 
     # 3. 创建配置目录
     mkdir -p "$INSTALL_PATH"
 
-    # 4. 生成配置和 VLESS 链接
+    # 4. 生成配置
     generate_singbox_config
     
-    # 5. 安装服务
-    install_singbox_service
-    install_cloudflared_service
+    # 5. 安装服务 (已兼容 OpenRC 和 Systemd)
+    install_and_enable_service "sing-box" "$SINGBOX_BIN run -C $INSTALL_PATH" ""
+    install_and_enable_service "cloudflared" "$CLOUDFLARED_BIN tunnel --no-autoupdate --token $ARGO_AUTH --url http://127.0.0.1:$SINGBOX_PORT" "sing-box.service"
     
     # 6. 启动服务
     start_services
@@ -367,14 +417,17 @@ install_node() {
 # 卸载服务
 uninstall_node() {
     log "正在停止并禁用服务..."
-    if command -v systemctl &> /dev/null; then
+    if [ "$INIT_SYSTEM" == "systemd" ]; then
         systemctl stop sing-box.service cloudflared.service &>/dev/null
         systemctl disable sing-box.service cloudflared.service &>/dev/null
         rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/cloudflared.service
         systemctl daemon-reload
-    else
-        # 兼容 Alpine/OpenRC
-        warn "检测到非 Systemd 系统，请手动清理 /etc/init.d/ 和 rc.d/ 目录下的相关服务文件。"
+    elif [ "$INIT_SYSTEM" == "openrc" ]; then
+        rc-service sing-box stop &>/dev/null
+        rc-service cloudflared stop &>/dev/null
+        rc-update del sing-box default &>/dev/null
+        rc-update del cloudflared default &>/dev/null
+        rm -f /etc/init.d/sing-box /etc/init.d/cloudflared
     fi
     
     log "正在移除二进制文件..."
