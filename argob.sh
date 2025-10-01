@@ -8,23 +8,23 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # --- 静态变量 ---
-NODE_INFO_FILE="$HOME/.singbox_vless_node_info"
+NODE_INFO_FILE="$HOME/.singbox_reality_argo_node_info"
 INSTALL_PATH="/etc/sing-box"
 CONFIG_FILE="${INSTALL_PATH}/config.json"
 SINGBOX_BIN="/usr/local/bin/sing-box"
-CLOUDFLARED_BIN="/usr/local/bin/cloudflared"
-# SINGBOX_URL_BASE 不再需要，将动态获取
-CLOUDFLARED_URL_BASE="https://github.com/cloudflare/cloudflared/releases/latest/download/"
-# 内部sing-box服务监听的端口
-SINGBOX_PORT="8001"
+# CLOUDFLARED_BIN 不再需要
+# SINGBOX_PORT 不再需要，直接监听 443
+SINGBOX_PORT="443"
 
 # --- 全局变量 (由用户输入或默认值填充) ---
 UUID=""
-NODE_NAME="VLESS-Argo-Singbox"
+PRIVATE_KEY="" # Reality 私钥
+SHORT_ID=""    # Reality Short ID
+ARGO_AUTH=""   # Cloudflare Tunnel Token
+ARGO_DOMAIN="" # Cloudflare Tunnel 域名
+NODE_NAME="VLESS-Reality-Argo"
 CFIP="cloudflare.182682.xyz"
 CFPORT="443"
-ARGO_DOMAIN=""
-ARGO_AUTH=""
 
 
 # =================================================================
@@ -49,6 +49,24 @@ generate_uuid() {
     else
         cat /proc/sys/kernel/random/uuid
     fi
+}
+
+# 生成 Reality 参数
+generate_reality_params() {
+    log "正在生成 VLESS Reality 参数..."
+    local output
+    # 使用 sing-box 命令直接生成私钥和 Short ID
+    output=$("$SINGBOX_BIN" generate reality)
+    
+    PRIVATE_KEY=$(echo "$output" | grep 'private key' | awk '{print $NF}')
+    SHORT_ID=$(echo "$output" | grep 'short id' | awk '{print $NF}')
+    
+    if [ -z "$PRIVATE_KEY" ] || [ -z "$SHORT_ID" ]; then
+        error "无法生成 Reality 参数。请确保 sing-box 已正确安装和运行。"
+    fi
+    
+    success "Reality Private Key: $PRIVATE_KEY"
+    success "Reality Short ID: $SHORT_ID"
 }
 
 # 查看已保存的节点信息
@@ -101,7 +119,7 @@ detect_os_arch() {
     log "检测到系统架构: $ARCH"
 }
 
-# 安装依赖
+# 安装依赖 (移除 uuid-runtime, 新增必要的依赖)
 install_dependencies() {
     log "正在更新软件包列表并安装依赖..."
     case $OS_ID in
@@ -110,13 +128,13 @@ install_dependencies() {
             ;;
         debian | ubuntu)
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update && apt-get install -y curl wget tar unzip bash jq uuid-runtime
+            apt-get update && apt-get install -y curl wget tar unzip bash jq
             ;;
         rhel)
             if command -v dnf &> /dev/null; then
-                dnf install -y curl wget tar unzip bash jq uuidgen
+                dnf install -y curl wget tar unzip bash jq
             elif command -v yum &> /dev/null; then
-                yum install -y curl wget tar unzip bash jq uuidgen
+                yum install -y curl wget tar unzip bash jq
             else
                 error "未找到 dnf 或 yum 包管理器。"
             fi
@@ -129,46 +147,54 @@ install_dependencies() {
     success "依赖安装完成。"
 }
 
-# 停止并禁用旧服务
+# 停止并禁用旧服务 (移除 cloudflared)
 stop_and_disable_services() {
     log "正在停止并禁用可能存在的旧服务..."
     if command -v systemctl &> /dev/null; then
-        systemctl stop sing-box xray cloudflared &>/dev/null
-        systemctl disable sing-box xray cloudflared &>/dev/null
+        # 仅停止 sing-box 和可能存在的旧 cloudflared
+        systemctl stop sing-box cloudflared &>/dev/null
+        systemctl disable sing-box cloudflared &>/dev/null
+        # 移除 cloudflared service 文件
+        rm -f /etc/systemd/system/cloudflared.service
     elif command -v rc-service &> /dev/null; then
         rc-service sing-box stop &>/dev/null
-        rc-service xray stop &>/dev/null
         rc-service cloudflared stop &>/dev/null
         rc-update del sing-box default &>/dev/null
-        rc-update del xray default &>/dev/null
         rc-update del cloudflared default &>/dev/null
+        # 移除 cloudflared service 文件
+        rm -f /etc/init.d/cloudflared
     fi
 }
 
-# 下载并安装二进制文件
-download_and_install() {
-    local name="$1"
-    local bin_path="$2"
-    local download_url="$3" # 第三个参数现在是完整的下载URL
-    local file_type="${4:-bin}" # 第四个参数用于判断文件类型
+# 下载并安装 sing-box (移除 cloudflared)
+download_and_install_singbox() {
+    local name="sing-box"
+    local bin_path="$SINGBOX_BIN"
 
+    log "正在获取 sing-box 最新版本下载链接..."
+    local SINGBOX_DOWNLOAD_URL
+    SINGBOX_DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r --arg ARCH "$ARCH" '.assets[] | select(.name | endswith("linux-\($ARCH).tar.gz")) | .browser_download_url')
+
+    if [ -z "$SINGBOX_DOWNLOAD_URL" ]; then
+        error "无法自动获取 sing-box 最新下载链接。"
+    fi
+    log "已获取最新链接: $SINGBOX_DOWNLOAD_URL"
+    
     log "正在下载 $name..."
-    wget -q -O "/tmp/$name.dl" "$download_url"
-    [[ $? -ne 0 ]] && error "$name 下载失败。 URL: $download_url"
+    wget -q -O "/tmp/$name.dl" "$SINGBOX_DOWNLOAD_URL"
+    [[ $? -ne 0 ]] && error "$name 下载失败。 URL: $SINGBOX_DOWNLOAD_URL"
 
-    if [[ "$file_type" == "tar.gz" ]]; then
-        log "正在解压并安装 $name..."
-        mkdir -p /tmp/install_temp
-        tar -xzf "/tmp/$name.dl" -C /tmp/install_temp
-        local found_bin=$(find /tmp/install_temp -type f -name "$name")
-        if [[ -n "$found_bin" ]]; then
-            mv "$found_bin" "$bin_path"
-        else
-            error "在下载的 $name 压缩包中未找到可执行文件。"
-        fi
+    log "正在解压并安装 $name..."
+    mkdir -p /tmp/install_temp
+    # 解压到临时目录
+    tar -xzf "/tmp/$name.dl" -C /tmp/install_temp
+    
+    # 在解压文件中找到 sing-box 二进制文件并移动
+    local found_bin=$(find /tmp/install_temp -type f -name "$name")
+    if [[ -n "$found_bin" ]]; then
+        mv "$found_bin" "$bin_path"
     else
-        log "正在安装 $name..."
-        mv "/tmp/$name.dl" "$bin_path"
+        error "在下载的 $name 压缩包中未找到可执行文件。"
     fi
 
     chmod +x "$bin_path"
@@ -176,10 +202,14 @@ download_and_install() {
     success "$name 安装完成。"
 }
 
-# 创建 sing-box 配置文件
+# 创建 sing-box 配置文件 (核心修改)
 create_config_file() {
-    log "正在创建 sing-box 配置文件..."
+    log "正在创建 sing-box 配置文件 (VLESS+Reality+Argo)..."
     mkdir -p "$INSTALL_PATH"
+    
+    # Reality 伪装域名，使用默认值
+    local REALITY_SERVER_NAME="www.youtube.com" 
+    
     cat > "$CONFIG_FILE" <<EOF
 {
   "log": {
@@ -190,45 +220,63 @@ create_config_file() {
     {
       "type": "vless",
       "tag": "vless-in",
-      "listen": "127.0.0.1",
+      "listen": "0.0.0.0",
       "listen_port": ${SINGBOX_PORT},
       "users": [
         {
           "uuid": "${UUID}",
-          "flow": ""
+          "flow": "xtls-rprx-vision"
         }
       ],
       "transport": {
-        "type": "ws",
-        "path": "/"
+        "type": "tcp"
+      },
+      "tls": {
+        "enabled": true,
+        "server_name": "${ARGO_DOMAIN}",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+             "server": "${REALITY_SERVER_NAME}"
+          },
+          "private_key": "${PRIVATE_KEY}",
+          "short_id": [
+            "${SHORT_ID}"
+          ]
+        }
       }
     }
   ],
   "outbounds": [
     {
-      "type": "direct",
-      "tag": "direct"
+      "type": "cloudflare-tunnel",
+      "tag": "cloudflare-tunnel-out",
+      "domain": "${ARGO_DOMAIN}",
+      "token": "${ARGO_AUTH}"
     }
-  ]
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": "vless-in",
+        "outbound": "cloudflare-tunnel-out"
+      }
+    ]
+  }
 }
 EOF
     success "配置文件创建完成: $CONFIG_FILE"
 }
 
-# 创建并启用服务
+# 创建并启用服务 (仅 sing-box)
 create_and_enable_service() {
-    log "正在创建并启用服务..."
+    log "正在创建并启用 sing-box 服务..."
     
-    if [[ -n "$ARGO_AUTH" ]]; then
-        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate run --token ${ARGO_AUTH}"
-    else
-        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate --url http://127.0.0.1:${SINGBOX_PORT}"
-    fi
-
     if [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "rhel" ]; then
+        # systemd
         cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
-Description=Sing-box Service
+Description=Sing-box Service (VLESS+Reality+Argo)
 After=network.target
 [Service]
 ExecStart=${SINGBOX_BIN} run -c ${CONFIG_FILE}
@@ -238,23 +286,14 @@ Group=root
 [Install]
 WantedBy=multi-user.target
 EOF
-        cat > /etc/systemd/system/cloudflared.service <<EOF
-[Unit]
-Description=Cloudflare Tunnel
-After=network.target
-[Service]
-ExecStart=${CLOUDFLARED_EXEC}
-Restart=on-failure
-User=root
-Group=root
-[Install]
-WantedBy=multi-user.target
-EOF
+        # 确保移除 cloudflared.service 
+        rm -f /etc/systemd/system/cloudflared.service
+        
         systemctl daemon-reload
-        systemctl enable sing-box cloudflared
-        systemctl restart sing-box cloudflared
-elif [ "$OS_ID" = "alpine" ]; then
-        # 补充：创建 sing-box OpenRC 服务文件
+        systemctl enable sing-box
+        systemctl restart sing-box
+    elif [ "$OS_ID" = "alpine" ]; then
+        # OpenRC
         cat > /etc/init.d/sing-box <<EOF
 #!/sbin/openrc-run
 command="${SINGBOX_BIN}"
@@ -264,92 +303,44 @@ name="sing-box"
 depend() { need net; }
 EOF
         chmod +x /etc/init.d/sing-box
-
-        # 保留 argob.sh 中对 cloudflared 参数的正确处理
-        local CLOUDFLARED_ARGS
-        if [[ -n "$ARGO_AUTH" ]]; then
-            # 仅参数部分
-            CLOUDFLARED_ARGS="tunnel --no-autoupdate run --token ${ARGO_AUTH}"
-        else
-            # 仅参数部分
-            CLOUDFLARED_ARGS="tunnel --no-autoupdate --url http://127.0.0.1:${SINGBOX_PORT}"
-        fi
-
-        cat > /etc/init.d/cloudflared <<EOF
-#!/sbin/openrc-run
-command="${CLOUDFLARED_BIN}"
-command_args="${CLOUDFLARED_ARGS}" # <--- 使用仅包含参数的变量
-pidfile="/run/\${RC_SVCNAME}.pid"
-name="cloudflared"
-depend() { need net; }
-EOF
-        chmod +x /etc/init.d/cloudflared
         
-        # 启动和启用服务
+        # 确保移除 cloudflared init.d 文件
+        rm -f /etc/init.d/cloudflared
+
         rc-update add sing-box default
-        rc-update add cloudflared default
-        rc-service sing-box restart >/dev/null 2>&1 &
-        rc-service cloudflared restart >/dev/null 2>&1 &
+        rc-service sing-box restart
     fi
+    success "sing-box 服务启动成功。"
 }
 
 # 显示并保存结果
 show_and_save_result() {
-    local final_domain="$ARGO_DOMAIN"
-    local systemd_system=false
+    local final_domain="${ARGO_DOMAIN}"
+    local REALITY_SERVER_NAME="www.youtube.com" 
 
-    if [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "rhel" ]; then
-        systemd_system=true
-    fi
-
-    if [[ -z "$final_domain" ]]; then
-        log "使用临时隧道，正在获取隧道域名..."
-        sleep 10 
-
-        if $systemd_system; then
-            TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -n 1)
-        else
-             TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
-        fi
-        
-        retries=0
-        while [ -z "$TUNNEL_URL" ] && [ $retries -lt 5 ]; do
-            warn "未能获取到域名，5秒后重试... (尝试次数: $((retries+1)))"
-            sleep 5
-            if $systemd_system; then
-                TUNNEL_URL=$(journalctl -u cloudflared -n 20 --no-pager | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -n 1)
-            else
-                TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /var/log/messages /var/log/cloudflared.log 2>/dev/null | tail -n 1)
-            fi
-            ((retries++))
-        done
-        
-        [[ -z "$TUNNEL_URL" ]] && error "无法获取 Cloudflare Tunnel 域名，请检查 cloudflared 服务状态和日志。"
-        final_domain=$(echo "$TUNNEL_URL" | sed 's|https://||')
-    fi
-    
-    success "获取到的域名: $final_domain"
-
-    VLESS_LINK="vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${final_domain}&fp=chrome&type=ws&host=${final_domain}&path=/&ed=2560#${NODE_NAME}" 
+    # VLESS 链接使用 Reality 参数
+    # 注意：此链接使用 Reality 的 'dest' 参数模拟 Cloudflare 优选IP和端口
+    VLESS_LINK="vless://${UUID}@${CFIP}:${CFPORT}?security=reality&sni=${ARGO_DOMAIN}&fp=chrome&pbk=${SHORT_ID}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision&dest=${REALITY_SERVER_NAME}:${CFPORT}#${NODE_NAME}" 
     
     SAVE_INFO="========================================
-           节点信息 (VLESS + Sing-box)
+           节点信息 (VLESS + Reality + Argo)
 ========================================
 部署时间: $(date)
 节点名称: ${NODE_NAME}
 UUID: ${UUID}
 优选IP: ${CFIP}
 优选端口: ${CFPORT}
-隧道域名: ${final_domain}
+隧道域名: ${ARGO_DOMAIN}
+Reality 私钥 (Private Key): ${PRIVATE_KEY}
+Reality 短 ID (Short ID): ${SHORT_ID}
 ----------------------------------------
-VLESS 链接:
+VLESS Reality 链接:
 ${VLESS_LINK}
 ----------------------------------------
 管理命令:
 查看节点: bash $0 -v
-重启服务 (systemd): systemctl restart sing-box cloudflared
-重启服务 (OpenRC): rc-service sing-box restart && rc-service cloudflared restart
-查看日志 (systemd): journalctl -u sing-box -f & journalctl -u cloudflared -f
+重启服务 (systemd/OpenRC): systemctl restart sing-box 或 rc-service sing-box restart
+查看日志 (systemd): journalctl -u sing-box -f
 查看日志 (OpenRC): tail -f /var/log/messages
 ========================================"
 
@@ -372,88 +363,93 @@ ${VLESS_LINK}
 # --- 交互式菜单和安装流程 ---
 # =================================================================
 
-# 极速模式
-quick_mode() {
+# 极速模式 (已移除，因为此架构强制要求 ARGO_AUTH 和 ARGO_DOMAIN)
+# 修改为简化安装，仍要求输入 Token 和 Domain
+simplified_mode() {
     clear
-    echo -e "${BLUE}=== 极速模式 ===${NC}"
+    echo -e "${BLUE}=== VLESS+Reality+Argo 简化模式 ===${NC}"
+    warn "注意: 此架构强制要求使用 Cloudflare Argo Token 和绑定域名。"
+    
+    # 1. UUID
     read -p "请输入您的 UUID (留空将自动生成): " UUID_INPUT
     UUID=${UUID_INPUT:-$(generate_uuid)}
     success "UUID 已设置为: $UUID"
+
+    # 2. Token
+    read -p "请输入 Cloudflare Argo Tunnel Token (必须填写): " ARGO_AUTH_INPUT
+    [[ -z "$ARGO_AUTH_INPUT" ]] && error "必须提供 Argo Tunnel Token。"
+    ARGO_AUTH=${ARGO_AUTH_INPUT}
+
+    # 3. Domain
+    read -p "请输入与该Token关联的域名 (必须填写): " ARGO_DOMAIN_INPUT
+    [[ -z "$ARGO_DOMAIN_INPUT" ]] && error "必须提供固定域名。"
+    ARGO_DOMAIN=${ARGO_DOMAIN_INPUT}
     
-    NODE_NAME="VLESS-Argo-Singbox-Quick"
+    # 4. 默认值
+    NODE_NAME="VLESS-Reality-Argo-Simp"
     CFIP="cloudflare.182682.xyz"
     CFPORT="443"
-    ARGO_DOMAIN=""
-    ARGO_AUTH=""
-    
+
     run_installation
 }
 
-# 完整模式
+# 完整模式 (与简化模式合并，因为参数是必需的)
 full_mode() {
     clear
-    echo -e "${BLUE}=== 完整配置模式 ===${NC}"
+    echo -e "${BLUE}=== VLESS+Reality+Argo 完整配置模式 ===${NC}"
+    warn "注意: 此架构强制要求使用 Cloudflare Argo Token 和绑定域名。"
+    
+    # 1. UUID
     read -p "请输入您的 UUID (留空将自动生成): " UUID_INPUT
     UUID=${UUID_INPUT:-$(generate_uuid)}
     success "UUID 已设置为: $UUID"
 
-    read -p "请输入节点名称 [默认: VLESS-Argo-Singbox]: " NODE_NAME_INPUT
-    NODE_NAME=${NODE_NAME_INPUT:-"VLESS-Argo-Singbox"}
-
+    # 2. 节点名称
+    read -p "请输入节点名称 [默认: VLESS-Reality-Argo]: " NODE_NAME_INPUT
+    NODE_NAME=${NODE_NAME_INPUT:-"VLESS-Reality-Argo"}
+    
+    # 3. 优选IP和端口
     read -p "请输入优选IP/域名 [默认: cloudflare.182682.xyz]: " CFIP_INPUT
     CFIP=${CFIP_INPUT:-"cloudflare.182682.xyz"}
 
     read -p "请输入优选端口 [默认: 443]: " CFPORT_INPUT
     CFPORT=${CFPORT_INPUT:-"443"}
 
-    echo
-    warn "如果您有 Cloudflare Argo 隧道的固定 Token，请输入它。"
-    warn "这将创建一个永久隧道，无需每次启动都生成新域名。"
-    warn "留空则使用临时的 trycloudflare.com 域名。"
-    read -p "请输入 Argo Tunnel Token (留空使用临时隧道): " ARGO_AUTH_INPUT
+    # 4. Token
+    read -p "请输入 Cloudflare Argo Tunnel Token (必须填写): " ARGO_AUTH_INPUT
+    [[ -z "$ARGO_AUTH_INPUT" ]] && error "必须提供 Argo Tunnel Token。"
     ARGO_AUTH=${ARGO_AUTH_INPUT}
-    
-    if [[ -n "$ARGO_AUTH" ]]; then
-        warn "由于您使用了 Argo Token，您需要提供一个已在Cloudflare上配置好的域名。"
-        read -p "请输入与该Token关联的域名 (必须填写): " ARGO_DOMAIN_INPUT
-        [[ -z "$ARGO_DOMAIN_INPUT" ]] && error "使用Argo Token时必须提供固定域名。"
-        ARGO_DOMAIN=${ARGO_DOMAIN_INPUT}
-    fi
+
+    # 5. Domain
+    read -p "请输入与该Token关联的域名 (必须填写): " ARGO_DOMAIN_INPUT
+    [[ -z "$ARGO_DOMAIN_INPUT" ]] && error "必须提供固定域名。"
+    ARGO_DOMAIN=${ARGO_DOMAIN_INPUT}
     
     run_installation
 }
 
 # 运行实际安装流程
 run_installation() {
-    echo -e "${GREEN}=== 开始部署 (内核: sing-box) ===${NC}"
+    echo -e "${GREEN}=== 开始部署 (内核: sing-box + 内置 Argo + Reality) ===${NC}"
     check_root
     detect_os_arch
     install_dependencies
     stop_and_disable_services
-
-    # --- 新增: 动态获取 sing-box 下载链接 ---
-    log "正在获取 sing-box 最新版本下载链接..."
-    local SINGBOX_DOWNLOAD_URL
-    SINGBOX_DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r --arg ARCH "$ARCH" '.assets[] | select(.name | endswith("linux-\($ARCH).tar.gz")) | .browser_download_url')
-
-    if [ -z "$SINGBOX_DOWNLOAD_URL" ]; then
-        error "无法自动获取 sing-box 最新下载链接。可能是网络问题或GitHub API限制。请稍后重试。"
-    fi
-    log "已获取最新链接: $SINGBOX_DOWNLOAD_URL"
-    # --- 修改结束 ---
     
-    download_and_install "sing-box" "$SINGBOX_BIN" "$SINGBOX_DOWNLOAD_URL" "tar.gz"
-    download_and_install "cloudflared" "$CLOUDFLARED_BIN" "${CLOUDFLARED_URL_BASE}cloudflared-linux-${ARCH}" "bin"
+    download_and_install_singbox # 仅安装 sing-box
+    
+    generate_reality_params # 生成 Reality 参数
+
     create_config_file
-    create_and_enable_service
+    create_and_enable_service # 仅启用 sing-box 服务
     show_and_save_result
 }
 
-# 卸载脚本
+# 卸载脚本 (移除 cloudflared 相关的卸载)
 uninstall_service() {
     clear
     echo -e "${RED}=== 卸载脚本 ===${NC}"
-    warn "这将从系统中移除 sing-box, Cloudflared 以及所有相关配置文件和服务。"
+    warn "这将从系统中移除 sing-box 以及所有相关配置文件和服务。"
     read -p "您确定要继续吗? (y/N): " CONFIRM_UNINSTALL
     if [[ ! "$CONFIRM_UNINSTALL" =~ ^[yY]$ ]]; then
         echo -e "${YELLOW}卸载已取消。${NC}"
@@ -465,20 +461,20 @@ uninstall_service() {
     
     log "正在停止并禁用服务..."
     if command -v systemctl &> /dev/null && ([ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "rhel" ]); then
-        systemctl stop sing-box cloudflared &>/dev/null
-        systemctl disable sing-box cloudflared &>/dev/null
-        rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/cloudflared.service
+        systemctl stop sing-box &>/dev/null
+        systemctl disable sing-box &>/dev/null
+        rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/cloudflared.service # 确保移除 cloudflared
         systemctl daemon-reload
     elif command -v rc-service &> /dev/null; then
         rc-service sing-box stop &>/dev/null
-        rc-service cloudflared stop &>/dev/null
+        rc-service cloudflared stop &>/dev/null # 尝试停止 cloudflared 以防万一
         rc-update del sing-box default &>/dev/null
         rc-update del cloudflared default &>/dev/null
         rm -f /etc/init.d/sing-box /etc/init.d/cloudflared
     fi
     
     log "正在移除二进制文件..."
-    rm -f "$SINGBOX_BIN" "$CLOUDFLARED_BIN"
+    rm -f "$SINGBOX_BIN"
     
     log "正在移除配置文件目录..."
     rm -rf "$INSTALL_PATH"
@@ -490,25 +486,25 @@ uninstall_service() {
 }
 
 
-# 主菜单
+# 主菜单 (修改极速模式为简化模式)
 main_menu() {
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}    Sing-box + Argo VLESS 一键部署脚本    ${NC}"
+    echo -e "${GREEN}  Sing-box VLESS + Reality + 内置 Argo    ${NC}"
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}    支持系统: Debian/Ubuntu/CentOS/Fedora/Alpine  ${NC}"
+    echo -e "${GREEN}     特点: 更低内存，更高效率 (需要 Argo Token)  ${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo
     echo -e "${YELLOW}请选择操作:${NC}"
-    echo -e "${BLUE}1) 极速模式 - 自动配置，快速部署 (临时域名)${NC}"
-    echo -e "${BLUE}2) 完整模式 - 自定义配置项 (推荐 Argo Token)${NC}"
+    echo -e "${BLUE}1) 简化模式 - 快速配置，必填 Argo Token/域名${NC}"
+    echo -e "${BLUE}2) 完整模式 - 自定义配置项，必填 Argo Token/域名${NC}"
     echo -e "${BLUE}3) 查看节点信息 - 显示已保存的节点${NC}"
     echo -e "${RED}4) 卸载脚本 - 移除所有相关文件和服务${NC}"
     echo
     read -p "请输入选择 (1/2/3/4): " MODE_CHOICE
 
     case $MODE_CHOICE in
-        1) quick_mode ;;
+        1) simplified_mode ;;
         2) full_mode ;;
         3) view_node_info; exit 0 ;;
         4) uninstall_service; exit 0 ;;
