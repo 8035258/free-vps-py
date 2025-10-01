@@ -222,7 +222,7 @@ create_and_enable_service() {
     if [[ -n "$ARGO_AUTH" ]]; then
         CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate run --token ${ARGO_AUTH}"
     else
-        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate --url http://127.0.0.1:${SINGBOX_PORT}"
+        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} --no-autoupdate --url http://127.0.0.1:${SINGBOX_PORT}"
     fi
 
     if [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "rhel" ]; then
