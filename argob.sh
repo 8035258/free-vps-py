@@ -68,10 +68,15 @@ install_deps() {
     success "依赖安装完成"
 }
 
-# 获取最新版本
-get_latest() {
+# 自动获取最新版本号
+get_latest_version() {
     local repo="$1"
-    curl -sL "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+    # 获取完整的 tag，例如 v1.12.8
+    local version=$(curl -sL "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [ -z "$version" ]; then
+        error "无法从 GitHub 获取 ${repo} 的最新版本，请检查网络连接。"
+    fi
+    echo "$version"
 }
 
 # 下载 Sing-box
@@ -118,6 +123,7 @@ download_singbox() {
     rm -rf sing-box.tar.gz "${extracted_dir}"
     success "Sing-box ${version_tag} 安装完成。"
 }
+
 
 # 下载 cloudflared
 download_cloudflared() {
