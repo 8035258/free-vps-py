@@ -200,7 +200,7 @@ create_config_file() {
       ],
       "transport": {
         "type": "ws",
-        "path": "/?ed=2560"
+        "path": "/"
       }
     }
   ],
