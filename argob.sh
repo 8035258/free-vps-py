@@ -193,14 +193,11 @@ generate_singbox_config() {
           "flow": "xtls-rprx-vision"
         }
       ],
-      "stream_options": {
-        "network": "ws",
-        "security": "none",
-        "ws_options": {
-          "path": "$WS_PATH",
-          "headers": {
-            "Host": "$ARGO_DOMAIN"
-          }
+      "transport": {
+        "type": "ws",
+        "path": "$WS_PATH",
+        "headers": {
+          "Host": "$ARGO_DOMAIN"
         }
       }
     }
