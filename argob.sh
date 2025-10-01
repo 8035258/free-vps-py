@@ -277,17 +277,21 @@ EOF
         systemctl enable "${service_name}.service" >/dev/null 2>&1
     elif [ "$INIT_SYSTEM" == "openrc" ]; then
         log "正在创建和安装 ${service_name} (OpenRC)..."
-        # 针对 OpenRC 系统的服务脚本
         cat > "/etc/init.d/${service_name}" <<EOF
 #!/sbin/openrc-run
 
 name="${service_name} Service"
-# 修复：直接将完整的命令包含在 command 变量中，避免 start-stop-daemon 将参数视为自己的选项
-command="${exec_command} ${openrc_args}"
-command_args=""
+# --- FIX FOR OPENRC ---
+# Correctly separate the command executable from its arguments.
+command="$exec_command"
+command_args="$openrc_args"
+# --- END FIX ---
 pidfile="/var/run/${service_name}.pid"
+
 depend() {
-    need localmount net
+    need net
+    use dns
+    after net dns
     # OpenRC 依赖设置
     if [ "$service_name" == "cloudflared" ]; then
         use sing-box
@@ -306,28 +310,41 @@ EOF
 
 # 启动服务
 start_services() {
-    log "正在启动 Sing-box 服务..."
+    log "正在启动 Sing-box 和 cloudflared 服务..."
     if [ "$INIT_SYSTEM" == "systemd" ]; then
-        systemctl start sing-box.service
-        systemctl start cloudflared.service
+        systemctl restart sing-box.service
+        systemctl restart cloudflared.service
         sleep 3 # 等待服务启动
         if systemctl is-active --quiet sing-box.service && systemctl is-active --quiet cloudflared.service; then
             success "Sing-box 和 cloudflared 服务已成功启动！"
         else
-            error "服务启动失败，请检查日志 (journalctl -u sing-box.service / cloudflared.service)"
+            error "服务启动失败，请检查日志 (journalctl -u sing-box.service / journalctl -u cloudflared.service)"
         fi
-    elif [ "$INIT_SYSTEM" == "openrc" ]; then
+    elif [ "$INIT_SYSTEM" == "openrc" ]; {
+        # 确保先停止任何可能正在运行的实例
+        rc-service sing-box stop >/dev/null 2>&1
+        rc-service cloudflared stop >/dev/null 2>&1
+        
+        # 逐个启动并检查
+        log "正在启动 sing-box..."
         rc-service sing-box start
-        rc-service cloudflared start
-        sleep 3
-        # OpenRC 状态检查
-        if rc-service sing-box status | grep -q "status: started" && rc-service cloudflared status | grep -q "status: started"; then
-            success "Sing-box 和 cloudflared 服务已成功启动！"
-        else
-            error "服务启动失败，请检查日志 (/var/log/messages 或 /var/log/syslog)。如果日志不清楚，请尝试手动运行命令：$SINGBOX_BIN run -C $INSTALL_PATH 和 $CLOUDFLARED_BIN tunnel --no-autoupdate --token $ARGO_AUTH --url http://127.0.0.1:$SINGBOX_PORT"
+        sleep 2
+        if ! rc-service sing-box status | grep -q "status: started"; then
+             error "Sing-box 服务启动失败。请手动运行命令检查: ${SINGBOX_BIN} run -C ${INSTALL_PATH}"
         fi
-    else
-        warn "请手动运行服务: $SINGBOX_BIN run -C $INSTALL_PATH 和 $CLOUDFLARED_BIN tunnel --no-autoupdate --token $ARGO_AUTH --url http://127.0.0.1:$SINGBOX_PORT"
+        success "Sing-box 服务已启动。"
+
+        log "正在启动 cloudflared..."
+        rc-service cloudflared start
+        sleep 2
+        if ! rc-service cloudflared status | grep -q "status: started"; then
+            error "Cloudflared 服务启动失败。请手动运行命令检查: ${CLOUDFLARED_BIN} tunnel --no-autoupdate --token ${ARGO_AUTH:0:10}... --url http://127.0.0.1:${SINGBOX_PORT}"
+        fi
+        success "Cloudflared 服务已启动。"
+        
+        success "所有服务已成功启动！"
+    } else
+        warn "请手动运行服务: ${SINGBOX_BIN} run -C ${INSTALL_PATH} 和 ${CLOUDFLARED_BIN} tunnel --no-autoupdate --token ${ARGO_AUTH} --url http://127.0.0.1:${SINGBOX_PORT}"
     fi
 }
 
@@ -425,11 +442,7 @@ install_node() {
     generate_singbox_config
     
     # 5. 安装服务 (已兼容 OpenRC 和 Systemd)
-    # OpenRC Sing-box 参数修复：必须明确指定 -C 配置目录
     install_and_enable_service "sing-box" "$SINGBOX_BIN" "network.target" "run -C $INSTALL_PATH"
-    
-    # OpenRC Cloudflared 参数修复：将完整的启动命令合并到 command 变量中
-    local cloudflared_command="$CLOUDFLARED_BIN tunnel --no-autoupdate --token $ARGO_AUTH --url http://127.0.0.1:$SINGBOX_PORT"
     install_and_enable_service "cloudflared" "$CLOUDFLARED_BIN" "sing-box.service" "tunnel --no-autoupdate --token $ARGO_AUTH --url http://127.0.0.1:$SINGBOX_PORT"
     
     # 6. 启动服务
@@ -493,13 +506,11 @@ main_menu() {
             # 兼容性处理：如果文件已存在，先卸载以避免服务冲突
             if [ -f "/etc/init.d/sing-box" ] || [ -f "/etc/systemd/system/sing-box.service" ]; then
                 warn "检测到旧服务文件，正在进行卸载..."
-                check_os
                 uninstall_node
             fi
             install_node 
             ;;
         2) 
-            check_os
             uninstall_node 
             ;;
         3) 
@@ -514,5 +525,10 @@ main_menu() {
         *) error "无效的选项。" ;;
     esac
 }
+
+# 检查 root 权限
+if [ "$(id -u)" -ne 0 ]; then
+    error "此脚本需要 root 权限才能运行。"
+fi
 
 main_menu
