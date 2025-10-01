@@ -74,10 +74,12 @@ get_latest() {
     curl -sL "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
 }
 
-# 下载 sing-box
+# 下载 Sing-box
 download_singbox() {
-    log "下载 Sing-box..."
-    local ver=$(get_latest "SagerNet/sing-box")
+    log "正在下载 Sing-box 二进制文件..."
+    local version_tag=$(get_latest_version "SagerNet/sing-box")
+    local version_num=$(echo "$version_tag" | sed 's/^v//')
+
     local arch=$(uname -m)
     local arch_pattern=""
     case $arch in
@@ -85,18 +87,36 @@ download_singbox() {
         aarch64) arch_pattern="linux-arm64" ;;
         armv7l) arch_pattern="linux-armv7" ;;
         i686) arch_pattern="linux-386" ;;
-        *) error "不支持架构 $arch" ;;
+        *) error "不支持的架构：$arch" ;;
     esac
 
-    local file="sing-box-${ver}-$arch_pattern.tar.gz"
-    local url="https://github.com/SagerNet/sing-box/releases/download/${ver}/${file}"
+    local file_name="sing-box-${version_num}-${arch_pattern}.tar.gz"
+    local url="https://github.com/SagerNet/sing-box/releases/download/${version_tag}/${file_name}"
 
-    curl -fL "$url" -o sing-box.tar.gz || error "下载失败"
-    tar -xzf sing-box.tar.gz
-    mv "sing-box-${ver}-${arch_pattern}/sing-box" "$SINGBOX_BIN"
+    log "尝试下载链接: $url"
+
+    if ! curl -fL "$url" -o sing-box.tar.gz; then
+        rm -f sing-box.tar.gz
+        error "下载 Sing-box 失败，请检查网络或 URL。"
+    fi
+
+    if ! tar -xzf sing-box.tar.gz; then
+        rm -f sing-box.tar.gz
+        error "解压 Sing-box 文件失败。下载的文件可能已损坏。"
+    fi
+
+    local extracted_dir=$(tar -tf sing-box.tar.gz | head -n 1 | awk -F/ '{print $1}')
+
+    if [ -f "${extracted_dir}/sing-box" ]; then
+        mv "${extracted_dir}/sing-box" "$SINGBOX_BIN"
+    else
+        rm -rf sing-box.tar.gz "${extracted_dir}"
+        error "在压缩包中找不到 sing-box 可执行文件。"
+    fi
+
     chmod +x "$SINGBOX_BIN"
-    rm -rf "sing-box-${ver}-${arch_pattern}" sing-box.tar.gz
-    success "Sing-box 安装完成"
+    rm -rf sing-box.tar.gz "${extracted_dir}"
+    success "Sing-box ${version_tag} 安装完成。"
 }
 
 # 下载 cloudflared
