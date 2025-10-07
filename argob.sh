@@ -330,7 +330,7 @@ show_and_save_result() {
     
     success "获取到的域名: $final_domain"
 
-    VLESS_LINK="vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${final_domain}&fp=chrome&type=ws&host=${final_domain}&path=/&ed=2560#${NODE_NAME}" 
+    VLESS_LINK="vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${final_domain}&fp=chrome&type=ws&host=${final_domain}&path=/#${NODE_NAME}" 
     
     SAVE_INFO="========================================
            节点信息 (VLESS + Sing-box)
