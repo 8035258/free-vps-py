@@ -333,7 +333,7 @@ show_and_save_result() {
     success "获取到的域名: $final_domain"
 
     # 生成 VLESS 链接
-    VLESS_LINK="vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${final_domain}&fp=chrome&type=ws&host=${final_domain}&path=/&ed=2560#${NODE_NAME}" 
+    VLESS_LINK="vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${final_domain}&fp=chrome&type=ws&host=${final_domain}&path=/#${NODE_NAME}" 
     
     # 准备保存到文件的信息
     SAVE_INFO="========================================
