@@ -257,6 +257,7 @@ elif [ "$OS_ID" = "alpine" ]; then
         # 补充：创建 sing-box OpenRC 服务文件
         cat > /etc/init.d/sing-box <<EOF
 #!/sbin/openrc-run
+supervisor=supervise-daemon
 command="${SINGBOX_BIN}"
 command_args="run -c ${CONFIG_FILE}"
 pidfile="/run/\${RC_SVCNAME}.pid"
@@ -277,6 +278,7 @@ EOF
 
         cat > /etc/init.d/cloudflared <<EOF
 #!/sbin/openrc-run
+supervisor=supervise-daemon
 command="${CLOUDFLARED_BIN}"
 command_args="${CLOUDFLARED_ARGS}" # <--- 使用仅包含参数的变量
 pidfile="/run/\${RC_SVCNAME}.pid"
