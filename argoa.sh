@@ -270,6 +270,7 @@ EOF
         # --- 创建 Alpine (OpenRC) 服务 ---
         cat > /etc/init.d/xray <<EOF
 #!/sbin/openrc-run
+supervisor=supervise-daemon
 command="${XRAY_BIN}"
 command_args="run -c ${CONFIG_FILE}"
 pidfile="/run/\${RC_SVCNAME}.pid"
@@ -279,6 +280,7 @@ EOF
         chmod +x /etc/init.d/xray
         cat > /etc/init.d/cloudflared <<EOF
 #!/sbin/openrc-run
+supervisor=supervise-daemon
 command="${CLOUDFLARED_BIN}"
 command_args="tunnel --no-autoupdate run --token ${ARGO_AUTH}"
 pidfile="/run/\${RC_SVCNAME}.pid"
