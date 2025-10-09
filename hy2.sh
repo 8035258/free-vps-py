@@ -129,6 +129,7 @@ EOF
     echo "正在配置 OpenRC 服务..."
     cat << 'EOF' > /etc/init.d/hysteria
 #!/sbin/openrc-run
+supervisor=supervise-daemon
 
 name="hysteria"
 description="Hysteria2 Server"
