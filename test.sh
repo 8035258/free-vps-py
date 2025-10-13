@@ -343,15 +343,24 @@ run_installation() {
 
     stop_old_processes # 清理旧进程
 
-    # --- 动态获取 sing-box 下载链接 ---
-    log "正在获取 sing-box 最新版本下载链接..."
+    # --- 动态获取 sing-box 下载链接 (修改后：不使用 jq) ---
+    log "正在获取 sing-box 最新版本下载链接 (尝试使用 grep/sed)..."
     local SINGBOX_DOWNLOAD_URL
-    SINGBOX_DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r --arg ARCH "$ARCH" '.assets[] | select(.name | endswith("linux-\($ARCH).tar.gz")) | .browser_download_url')
+    local TARGET_ARCH_PATTERN="linux-${ARCH}\.tar\.gz"
+
+    # 使用 curl 获取 JSON，然后用 grep 和 sed 提取匹配架构的链接
+    SINGBOX_DOWNLOAD_URL=$(
+        curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | \
+        grep -o '"browser_download_url": "[^"]*'"${TARGET_ARCH_PATTERN}"'"' | \
+        head -n 1 | \
+        sed -E 's/.*"browser_download_url": "(.*)".*/\1/'
+    )
 
     if [ -z "$SINGBOX_DOWNLOAD_URL" ]; then
-        error "无法自动获取 sing-box 最新下载链接。可能是网络问题或GitHub API限制。请稍后重试。"
+        error "无法自动获取 sing-box 最新下载链接。请检查网络或确认目标文件 ${TARGET_ARCH_PATTERN} 是否存在。"
     fi
     log "已获取最新链接: $SINGBOX_DOWNLOAD_URL"
+    # --- 修改结束 ---
     
     download_and_install "sing-box" "$SINGBOX_BIN" "$SINGBOX_DOWNLOAD_URL" "tar.gz"
     download_and_install "cloudflared" "$CLOUDFLARED_BIN" "${CLOUDFLARED_URL_BASE}cloudflared-linux-${ARCH}" "bin"
