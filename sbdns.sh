@@ -48,7 +48,6 @@ generate_uuid() {
     elif command -v python3 &> /dev/null; then
         python3 -c "import uuid; print(str(uuid.uuid4()))"
     else
-        # 在没有 uuidgen 或 python 的情况下，使用 /proc/sys/kernel/random/uuid (通用)
         cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "ffffffff-ffff-ffff-ffff-ffffffffffff"
     fi
 }
@@ -94,7 +93,7 @@ download_and_install() {
     local download_url="$3"
     local file_type="${4:-bin}"
 
-    mkdir -p "$(dirname "$bin_path")" # 确保 $HOME/bin 存在
+    mkdir -p "$(dirname "$bin_path")"
 
     log "正在下载 $name..."
     wget -q -O "/tmp/$name.dl" "$download_url"
@@ -120,9 +119,9 @@ download_and_install() {
     success "$name 安装完成。"
 }
 
-# 创建 sing-box 配置文件 (已修复监听地址和 DNS 配置)
+# 创建 sing-box 配置文件 (修复路由规则)
 create_config_file() {
-    log "正在创建 sing-box 配置文件..."
+    log "正在创建 sing-box 配置文件 (已修复路由规则)..."
     mkdir -p "$INSTALL_PATH"
     cat > "$CONFIG_FILE" <<EOF
 {
@@ -134,13 +133,11 @@ create_config_file() {
     "servers": [
       {
         "tag": "dns_servers",
-        "address": "1.1.1.1",
-        "detour": "direct"
+        "address": "1.1.1.1"
       },
       {
         "tag": "dns_backup",
-        "address": "8.8.8.8",
-        "detour": "direct"
+        "address": "8.8.8.8"
       }
     ],
     "final": "dns_servers",
@@ -161,26 +158,18 @@ create_config_file() {
       "transport": {
         "type": "ws",
         "path": "/"
-      }
+      },
+      "sniff": true,
+      "sniff_override_destination": false
     }
   ],
   "outbounds": [
     {
       "type": "direct",
       "tag": "direct"
-    },
-    {
-      "type": "dns",
-      "tag": "dns-out"
     }
   ],
   "route": {
-    "rules": [
-      {
-        "type": "dns",
-        "outbound_tag": "dns-out"
-      }
-    ],
     "final": "direct"
   }
 }
@@ -188,7 +177,7 @@ EOF
     success "配置文件创建完成: $CONFIG_FILE"
 }
 
-# 启动服务 (使用后台命令，添加环境变量修复启动失败问题)
+# 启动服务 (移除环境变量，增加启动延时)
 start_services_no_root() {
     log "正在启动 sing-box 和 cloudflared 进程..."
     
@@ -196,18 +185,20 @@ start_services_no_root() {
     echo "" > "$LOG_FILE"
     echo "--- $(date) --- 服务重启开始 ---" >> "$LOG_FILE"
 
-    # 1. 启动 sing-box (添加环境变量 ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true)
-    # 修复 Sing-box 启动失败的问题
-    nohup env ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true "$SINGBOX_BIN" run -c "$CONFIG_FILE" >> "$LOG_FILE" 2>&1 &
+    # 1. 启动 sing-box (已无需环境变量)
+    nohup "$SINGBOX_BIN" run -c "$CONFIG_FILE" >> "$LOG_FILE" 2>&1 &
     SINGBOX_PID=$!
     log "Sing-box 进程 ID: $SINGBOX_PID"
+    
+    # 增加延时，确保 Sing-box 启动并绑定端口
+    log "等待 Sing-box 启动 (3秒)..."
+    sleep 3
 
     # 2. 启动 cloudflared
     local CLOUDFLARED_EXEC
     if [[ -n "$ARGO_AUTH" ]]; then
         CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate run --token ${ARGO_AUTH}"
     else
-        # 使用 0.0.0.0 确保 Cloudflared 连接到 Sing-box
         CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate --url http://0.0.0.0:${SINGBOX_PORT}"
     fi
 
@@ -216,7 +207,7 @@ start_services_no_root() {
     log "Cloudflared 进程 ID: $CLOUDFLARED_PID"
 
     success "服务已在后台启动。查看日志：tail -f $LOG_FILE"
-    sleep 5 # 等待进程稳定和 cloudflared 建立隧道
+    sleep 5
 }
 
 
