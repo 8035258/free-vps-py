@@ -68,8 +68,6 @@ view_node_info() {
     fi
 }
 
-# 移除 check_root 函数，因为不再需要
-
 # 检测操作系统和架构
 detect_os_arch() {
     case $(uname -m) in
@@ -79,8 +77,6 @@ detect_os_arch() {
     esac
     log "检测到系统架构: $ARCH"
 }
-
-# 移除 install_dependencies 函数，依赖假设已安装或容器环境自带
 
 # 停止旧进程 (非 root 环境)
 stop_old_processes() {
@@ -124,7 +120,7 @@ download_and_install() {
     success "$name 安装完成。"
 }
 
-# 创建 sing-box 配置文件 (DNS 配置保持不变)
+# 创建 sing-box 配置文件 (已修复监听地址和 DNS 配置)
 create_config_file() {
     log "正在创建 sing-box 配置文件..."
     mkdir -p "$INSTALL_PATH"
@@ -154,7 +150,7 @@ create_config_file() {
     {
       "type": "vless",
       "tag": "vless-in",
-      "listen": "127.0.0.1",
+      "listen": "0.0.0.0",
       "listen_port": ${SINGBOX_PORT},
       "users": [
         {
@@ -192,12 +188,17 @@ EOF
     success "配置文件创建完成: $CONFIG_FILE"
 }
 
-# 启动服务 (使用后台命令，无需 root 权限)
+# 启动服务 (使用后台命令，添加环境变量修复启动失败问题)
 start_services_no_root() {
     log "正在启动 sing-box 和 cloudflared 进程..."
+    
+    # 确保日志文件存在并清空
+    echo "" > "$LOG_FILE"
+    echo "--- $(date) --- 服务重启开始 ---" >> "$LOG_FILE"
 
-    # 1. 启动 sing-box
-    nohup "$SINGBOX_BIN" run -c "$CONFIG_FILE" >> "$LOG_FILE" 2>&1 &
+    # 1. 启动 sing-box (添加环境变量 ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true)
+    # 修复 Sing-box 启动失败的问题
+    nohup env ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true "$SINGBOX_BIN" run -c "$CONFIG_FILE" >> "$LOG_FILE" 2>&1 &
     SINGBOX_PID=$!
     log "Sing-box 进程 ID: $SINGBOX_PID"
 
@@ -206,7 +207,8 @@ start_services_no_root() {
     if [[ -n "$ARGO_AUTH" ]]; then
         CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate run --token ${ARGO_AUTH}"
     else
-        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate --url http://127.0.0.1:${SINGBOX_PORT}"
+        # 使用 0.0.0.0 确保 Cloudflared 连接到 Sing-box
+        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate --url http://0.0.0.0:${SINGBOX_PORT}"
     fi
 
     nohup $CLOUDFLARED_EXEC >> "$LOG_FILE" 2>&1 &
@@ -260,7 +262,7 @@ ${VLESS_LINK}
 ----------------------------------------
 管理命令 (非ROOT环境):
 停止服务: pkill -f sing-box && pkill -f cloudflared
-查看节点: bash $0 -v
+查看节点: bash \$0 -v
 查看日志: tail -f $LOG_FILE
 ========================================"
 
@@ -337,18 +339,15 @@ full_mode() {
 # 运行实际安装流程
 run_installation() {
     echo -e "${GREEN}=== 开始部署 (内核: sing-box) ===${NC}"
-    # check_root 已移除
     detect_os_arch
-    # install_dependencies 已移除
 
     stop_old_processes # 清理旧进程
 
-    # --- 动态获取 sing-box 下载链接 (修改后：不使用 jq) ---
-    log "正在获取 sing-box 最新版本下载链接 (尝试使用 grep/sed)..."
+    # --- 动态获取 sing-box 最新版本下载链接 (使用 grep/sed 避免 jq 依赖) ---
+    log "正在获取 sing-box 最新版本下载链接 (使用 grep/sed)..."
     local SINGBOX_DOWNLOAD_URL
     local TARGET_ARCH_PATTERN="linux-${ARCH}\.tar\.gz"
 
-    # 使用 curl 获取 JSON，然后用 grep 和 sed 提取匹配架构的链接
     SINGBOX_DOWNLOAD_URL=$(
         curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | \
         grep -o '"browser_download_url": "[^"]*'"${TARGET_ARCH_PATTERN}"'"' | \
@@ -360,7 +359,6 @@ run_installation() {
         error "无法自动获取 sing-box 最新下载链接。请检查网络或确认目标文件 ${TARGET_ARCH_PATTERN} 是否存在。"
     fi
     log "已获取最新链接: $SINGBOX_DOWNLOAD_URL"
-    # --- 修改结束 ---
     
     download_and_install "sing-box" "$SINGBOX_BIN" "$SINGBOX_DOWNLOAD_URL" "tar.gz"
     download_and_install "cloudflared" "$CLOUDFLARED_BIN" "${CLOUDFLARED_URL_BASE}cloudflared-linux-${ARCH}" "bin"
