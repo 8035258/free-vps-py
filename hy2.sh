@@ -1,8 +1,20 @@
 #!/bin/bash
 
-# ===== 随机生成端口和密码 =====
-[ -z "$HY2_PORT" ] && HY2_PORT=$(shuf -i 20000-65000 -n 1)
-[ -z "$PASSWD" ] && PASSWD=$(cat /proc/sys/kernel/random/uuid)
+# ===== 交互式输入端口和密码，不输入则随机生成 =====
+
+# 提示输入端口
+read -p "请输入 Hysteria2 端口 (30000-65000) [默认随机生成]: " CUSTOM_PORT
+# 如果用户没有输入（即变量为空），则随机生成端口
+[ -z "$CUSTOM_PORT" ] && HY2_PORT=$(shuf -i 20000-65000 -n 1) || HY2_PORT=$CUSTOM_PORT
+
+# 提示输入密码
+read -p "请输入 Hysteria2 密码 [默认随机生成]: " CUSTOM_PASSWD
+# 如果用户没有输入（即变量为空），则随机生成密码
+[ -z "$CUSTOM_PASSWD" ] && PASSWD=$(cat /proc/sys/kernel/random/uuid) || PASSWD=$CUSTOM_PASSWD
+
+# 打印最终使用的值
+echo "Hysteria2 端口设置为: $HY2_PORT"
+echo "Hysteria2 密码设置为: $PASSWD"
 
 # ===== 检查 root =====
 [ "$(id -u)" -ne 0 ] && echo "错误：请在 root 用户下运行此脚本。" && exit 1
