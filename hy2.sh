@@ -5,7 +5,7 @@
 # 提示输入端口
 read -p "请输入 Hysteria2 端口 (30000-65000) [默认随机生成]: " CUSTOM_PORT
 # 如果用户没有输入（即变量为空），则随机生成端口
-[ -z "$CUSTOM_PORT" ] && HY2_PORT=$(shuf -i 20000-65000 -n 1) || HY2_PORT=$CUSTOM_PORT
+[ -z "$CUSTOM_PORT" ] && HY2_PORT=$(shuf -i 30000-65000 -n 1) || HY2_PORT=$CUSTOM_PORT
 
 # 提示输入密码
 read -p "请输入 Hysteria2 密码 [默认随机生成]: " CUSTOM_PASSWD
@@ -77,7 +77,7 @@ openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
 
 # ===== 写入 Hysteria2 配置文件 =====
 cat << EOF > /etc/hysteria/config.yaml
-listen: 0.0.0.0:$HY2_PORT
+listen: :$HY2_PORT
 
 tls:
   cert: /etc/hysteria/server.crt
@@ -95,25 +95,6 @@ masquerade:
     url: https://bing.com
     rewriteHost: true
 EOF
-
-# ===== 强制禁用 IPv6 (新增部分) =====
-echo "正在强制系统禁用 IPv6..."
-
-# 1. 立即禁用 IPv6
-# 临时生效，防止Hysteria2立即绑定IPv6
-sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null
-sysctl -w net.ipv6.conf.default.disable_ipv6=1 2>/dev/null
-
-# 2. 写入配置文件以永久生效
-if ! grep -q "net.ipv6.conf.all.disable_ipv6" /etc/sysctl.conf; then
-    echo -e "\n# Hysteria2 禁用 IPv6，解决QUIC连接迁移问题" >> /etc/sysctl.conf
-    echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf
-    echo "net.ipv6.conf.default.disable_ipv6 = 1" >> /etc/sysctl.conf
-    # 应用更改
-    sysctl -p
-fi
-
-echo "IPv6 已永久禁用。"
 
 # ===== 根据系统配置服务 =====
 case "$OS_ID" in
