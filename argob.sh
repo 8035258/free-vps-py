@@ -492,3 +492,90 @@ run_installation() {
     download_and_install "sing-box" "$SINGBOX_BIN" "$SINGBOX_DOWNLOAD_URL" "tar.gz"
     download_and_install "cloudflared" "$CLOUDFLARED_BIN" "${CLOUDFLARED_URL_BASE}cloudflared-linux-${ARCH}" "bin"
     create_config_file
+    create_and_enable_service
+    show_and_save_result
+}
+
+# 卸载脚本
+uninstall_service() {
+    clear
+    echo -e "${RED}=== 卸载脚本 ===${NC}"
+    warn "这将从系统中移除 sing-box, Cloudflared 以及所有相关配置文件和服务。"
+    read -p "您确定要继续吗? (y/N): " CONFIRM_UNINSTALL
+    if [[ ! "$CONFIRM_UNINSTALL" =~ ^[yY]$ ]]; then
+        echo -e "${YELLOW}卸载已取消。${NC}"
+        exit 0
+    fi
+
+    check_root
+    detect_os_arch
+    
+    log "正在停止并禁用服务..."
+    if command -v systemctl &> /dev/null && ([ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "rhel" ]); then
+        systemctl stop sing-box cloudflared &>/dev/null
+        systemctl disable sing-box cloudflared &>/dev/null
+        rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/cloudflared.service
+        systemctl daemon-reload
+    elif command -v rc-service &> /dev/null; then
+        rc-service sing-box stop &>/dev/null
+        rc-service cloudflared stop &>/dev/null
+        rc-update del sing-box default &>/dev/null
+        rc-update del cloudflared default &>/dev/null
+        rm -f /etc/init.d/sing-box /etc/init.d/cloudflared
+    fi
+    
+    log "正在移除二进制文件..."
+    rm -f "$SINGBOX_BIN" "$CLOUDFLARED_BIN"
+    
+    log "正在移除配置文件目录..."
+    rm -rf "$INSTALL_PATH"
+    
+    log "正在移除节点信息文件..."
+    rm -f "$NODE_INFO_FILE"
+
+    # --- 卸载时清理 /etc/sysctl.conf 中添加的自定义优化配置 ---
+    log "正在清理 /etc/sysctl.conf 中的自定义网络优化设置..."
+    # 使用 sed 删除自定义设置块
+    sudo sed -i '/# --- Custom Network Optimization Settings by argob.sh (for Hysteria2-like performance) ---/,/net.ipv4.tcp_ecn = 0/d' /etc/sysctl.conf 2>/dev/null
+    # 重新加载配置
+    sudo sysctl -p &> /dev/null
+    # --------------------------------------------------------
+    
+    success "卸载完成！"
+}
+
+
+# 主菜单
+main_menu() {
+    clear
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}    Sing-box + Argo VLESS 一键部署脚本    ${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}    支持系统: Debian/Ubuntu/CentOS/Fedora/Alpine  ${NC}"
+    echo -e "${GREEN}    版本：增强版 (自动TCP优化)           ${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo
+    echo -e "${YELLOW}请选择操作:${NC}"
+    echo -e "${BLUE}1) 极速模式 - 自动配置，快速部署 (临时域名)${NC}"
+    echo -e "${BLUE}2) 完整模式 - 自定义配置项 (推荐 Argo Token)${NC}"
+    echo -e "${BLUE}3) 查看节点信息 - 显示已保存的节点${NC}"
+    echo -e "${RED}4) 卸载脚本 - 移除所有相关文件和服务${NC}"
+    echo
+    read -p "请输入选择 (1/2/3/4): " MODE_CHOICE
+
+    case $MODE_CHOICE in
+        1) quick_mode ;;
+        2) full_mode ;;
+        3) view_node_info; exit 0 ;;
+        4) uninstall_service; exit 0 ;;
+        *) error "无效输入，请输入 1-4 之间的数字。" ;;
+    esac
+}
+
+# --- 脚本入口 ---
+if [ "$1" = "-v" ]; then
+    view_node_info
+    exit 0
+fi
+
+main_menu
