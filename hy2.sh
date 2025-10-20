@@ -96,24 +96,33 @@ masquerade:
     rewriteHost: true
 EOF
 
-# ===== 强制禁用 IPv6 (新增部分) =====
-echo "正在强制系统禁用 IPv6..."
+# ===== IPv6禁用 + 缓冲区增大 =====
 
-# 1. 立即禁用 IPv6
-# 临时生效，防止Hysteria2立即绑定IPv6
+echo "正在应用内核网络优化..."
+
+# 1. 立即禁用 IPv6 (临时生效)
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null
 sysctl -w net.ipv6.conf.default.disable_ipv6=1 2>/dev/null
 
 # 2. 写入配置文件以永久生效
-if ! grep -q "net.ipv6.conf.all.disable_ipv6" /etc/sysctl.conf; then
-    echo -e "\n# Hysteria2 禁用 IPv6，解决QUIC连接迁移问题" >> /etc/sysctl.conf
+# 检查是否已添加自定义优化块，防止重复写入
+if ! grep -q "net.core.rmem_max" /etc/sysctl.conf; then
+    echo -e "\n# --- Hysteria2/QUIC 优化 (自动添加) ---" >> /etc/sysctl.conf
+    
+    # 禁用 IPv6 (解决QUIC连接迁移问题)
     echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf
     echo "net.ipv6.conf.default.disable_ipv6 = 1" >> /etc/sysctl.conf
-    # 应用更改
-    sysctl -p
+    
+    # 增大网络缓冲区上限 (提高高带宽性能)
+    echo "net.core.rmem_max = 67108864" >> /etc/sysctl.conf
+    echo "net.core.wmem_max = 67108864" >> /etc/sysctl.conf
+    echo "net.core.netdev_max_backlog = 250000" >> /etc/sysctl.conf
+    
+    # 应用更改并抑制输出
+    sysctl -p > /dev/null
 fi
 
-echo "IPv6 已永久禁用。"
+echo "内核网络优化及 IPv6 禁用已完成。"
 
 # ===== 根据系统配置服务 =====
 case "$OS_ID" in
