@@ -129,6 +129,46 @@ install_dependencies() {
     success "依赖安装完成。"
 }
 
+# 应用 TCP 拥塞控制和内核优化
+apply_tcp_optimizations() {
+    log "正在应用 TCP/BBR/FQ 内核优化..."
+
+    # 仅将优化配置追加到 sysctl.conf，确保设置永久化
+    cat <<EOF | sudo tee -a /etc/sysctl.conf
+# --- Custom Network Optimization Settings by argob.sh (for Hysteria2-like performance) ---
+net.ipv4.tcp_congestion_control = bbr
+net.core.default_qdisc = fq
+
+# TCP Fast Open (TFO) - 减少连接延迟
+net.ipv4.tcp_fastopen = 3
+
+# 增大 TCP/UDP 内存限制和 Backlog (约 64MB)
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.core.netdev_max_backlog = 250000
+
+# 调整 TCP 缓冲区大小
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 87380 67108864
+
+# 启用其他 TCP 优化
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_ecn = 0
+EOF
+    
+    # 使配置立即生效，并抑制输出
+    sudo sysctl -p &> /dev/null
+
+    if [ $? -ne 0 ]; then
+        warn "内核参数应用可能存在错误，请检查您的内核是否完整支持所有参数。"
+    else
+        success "TCP 优化配置已应用并永久化。"
+    fi
+}
+
 # 停止并禁用旧服务
 stop_and_disable_services() {
     log "正在停止并禁用可能存在的旧服务..."
@@ -431,6 +471,11 @@ run_installation() {
     check_root
     detect_os_arch
     install_dependencies
+    
+    # --- 新增：调用 TCP 优化函数，确保性能最大化 ---
+    apply_tcp_optimizations
+    # ---------------------------------------------
+
     stop_and_disable_services
 
     # --- 新增: 动态获取 sing-box 下载链接 ---
@@ -447,81 +492,3 @@ run_installation() {
     download_and_install "sing-box" "$SINGBOX_BIN" "$SINGBOX_DOWNLOAD_URL" "tar.gz"
     download_and_install "cloudflared" "$CLOUDFLARED_BIN" "${CLOUDFLARED_URL_BASE}cloudflared-linux-${ARCH}" "bin"
     create_config_file
-    create_and_enable_service
-    show_and_save_result
-}
-
-# 卸载脚本
-uninstall_service() {
-    clear
-    echo -e "${RED}=== 卸载脚本 ===${NC}"
-    warn "这将从系统中移除 sing-box, Cloudflared 以及所有相关配置文件和服务。"
-    read -p "您确定要继续吗? (y/N): " CONFIRM_UNINSTALL
-    if [[ ! "$CONFIRM_UNINSTALL" =~ ^[yY]$ ]]; then
-        echo -e "${YELLOW}卸载已取消。${NC}"
-        exit 0
-    fi
-
-    check_root
-    detect_os_arch
-    
-    log "正在停止并禁用服务..."
-    if command -v systemctl &> /dev/null && ([ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "rhel" ]); then
-        systemctl stop sing-box cloudflared &>/dev/null
-        systemctl disable sing-box cloudflared &>/dev/null
-        rm -f /etc/systemd/system/sing-box.service /etc/systemd/system/cloudflared.service
-        systemctl daemon-reload
-    elif command -v rc-service &> /dev/null; then
-        rc-service sing-box stop &>/dev/null
-        rc-service cloudflared stop &>/dev/null
-        rc-update del sing-box default &>/dev/null
-        rc-update del cloudflared default &>/dev/null
-        rm -f /etc/init.d/sing-box /etc/init.d/cloudflared
-    fi
-    
-    log "正在移除二进制文件..."
-    rm -f "$SINGBOX_BIN" "$CLOUDFLARED_BIN"
-    
-    log "正在移除配置文件目录..."
-    rm -rf "$INSTALL_PATH"
-    
-    log "正在移除节点信息文件..."
-    rm -f "$NODE_INFO_FILE"
-    
-    success "卸载完成！"
-}
-
-
-# 主菜单
-main_menu() {
-    clear
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}    Sing-box + Argo VLESS 一键部署脚本    ${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}    支持系统: Debian/Ubuntu/CentOS/Fedora/Alpine  ${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    echo
-    echo -e "${YELLOW}请选择操作:${NC}"
-    echo -e "${BLUE}1) 极速模式 - 自动配置，快速部署 (临时域名)${NC}"
-    echo -e "${BLUE}2) 完整模式 - 自定义配置项 (推荐 Argo Token)${NC}"
-    echo -e "${BLUE}3) 查看节点信息 - 显示已保存的节点${NC}"
-    echo -e "${RED}4) 卸载脚本 - 移除所有相关文件和服务${NC}"
-    echo
-    read -p "请输入选择 (1/2/3/4): " MODE_CHOICE
-
-    case $MODE_CHOICE in
-        1) quick_mode ;;
-        2) full_mode ;;
-        3) view_node_info; exit 0 ;;
-        4) uninstall_service; exit 0 ;;
-        *) error "无效输入，请输入 1-4 之间的数字。" ;;
-    esac
-}
-
-# --- 脚本入口 ---
-if [ "$1" = "-v" ]; then
-    view_node_info
-    exit 0
-fi
-
-main_menu
