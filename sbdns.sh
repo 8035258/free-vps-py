@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin.bash
 
 # --- 颜色和样式 ---
 RED='\033[0;31m'
@@ -22,7 +22,7 @@ LOG_FILE="$HOME/run.log" # 新增日志文件
 # --- 全局变量 (由用户输入或默认值填充) ---
 UUID=""
 NODE_NAME="VLESS-Argo-Singbox"
-CFIP="cloudflare.182682.xyz"
+CFIP="cdns.doon.eu.org"
 CFPORT="443"
 ARGO_DOMAIN=""
 ARGO_AUTH=""
@@ -177,66 +177,56 @@ EOF
     success "配置文件创建完成: $CONFIG_FILE"
 }
 
-# 启动服务 (移除环境变量，增加启动延时)
-start_services_no_root() {
-    log "正在启动 sing-box 和 cloudflared 进程..."
+# --- (函数 start_services_no_root 已被移除) ---
+
+
+# --- 进程守护函数 ---
+start_and_guard_services() {
+    log "正在启动 [守护服务] 模式..."
     
     # 确保日志文件存在并清空
     echo "" > "$LOG_FILE"
-    echo "--- $(date) --- 服务重启开始 ---" >> "$LOG_FILE"
+    echo "--- $(date) --- 服务守护启动 ---" >> "$LOG_FILE"
 
-    # 1. 启动 sing-box (已无需环境变量)
-    nohup "$SINGBOX_BIN" run -c "$CONFIG_FILE" >> "$LOG_FILE" 2>&1 &
-    SINGBOX_PID=$!
-    log "Sing-box 进程 ID: $SINGBOX_PID"
-    
-    # 增加延时，确保 Sing-box 启动并绑定端口
-    log "等待 Sing-box 启动 (3秒)..."
+    log "在后台启动 [sing-box] 守护循环..."
+    (
+        while true; do
+            log "守护进程: 启动 sing-box..."
+            "$SINGBOX_BIN" run -c "$CONFIG_FILE" >> "$LOG_FILE" 2>&1
+            warn "守护进程: sing-box 意外退出，5秒后重启..."
+            sleep 5
+        done
+    ) &
+
+    log "等待 sing-box 启动 (3秒)..."
     sleep 3
 
-    # 2. 启动 cloudflared
-    local CLOUDFLARED_EXEC
-    if [[ -n "$ARGO_AUTH" ]]; then
-        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate run --token ${ARGO_AUTH}"
-    else
-        CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate --url http://0.0.0.0:${SINGBOX_PORT}"
+    # 准备 cloudflared 命令 (ARGO_AUTH 必须存在)
+    if [[ -z "$ARGO_AUTH" ]]; then
+        error "守护进程启动失败: 未找到 ARGO_AUTH。请重新安装。"
     fi
+    local CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate run --token ${ARGO_AUTH}"
 
-    nohup $CLOUDFLARED_EXEC >> "$LOG_FILE" 2>&1 &
-    CLOUDFLARED_PID=$!
-    log "Cloudflared 进程 ID: $CLOUDFLARED_PID"
-
-    success "服务已在后台启动。查看日志：tail -f $LOG_FILE"
-    sleep 5
+    log "在前台启动 [cloudflared] 守护循环 (这将阻塞脚本)..."
+    success "服务已进入守护模式。保持此终端开启即可。"
+    success "按 [Ctrl+C] 可停止守护。"
+    
+    while true; do
+        log "守护进程: 启动 cloudflared..."
+        $CLOUDFLARED_EXEC >> "$LOG_FILE" 2>&1
+        warn "守护进程: cloudflared 意外退出，5秒后重启..."
+        sleep 5
+    done
 }
 
 
-# 显示并保存结果
+# 显示并保存结果 (已简化)
 show_and_save_result() {
-    local final_domain="$ARGO_DOMAIN"
-    
-    if [[ -z "$final_domain" ]]; then
-        log "使用临时隧道，正在获取隧道域名..."
-        sleep 10 
+    # --- 修改: 不再需要获取临时域名 ---
+    # ARGO_DOMAIN 是在 full_mode 中设置的全局变量
+    success "使用固定域名: $ARGO_DOMAIN"
 
-        # 从日志文件中获取域名 (最可靠的方式)
-        TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG_FILE" | tail -n 1)
-        
-        retries=0
-        while [ -z "$TUNNEL_URL" ] && [ $retries -lt 5 ]; do
-            warn "未能获取到域名，5秒后重试... (尝试次数: $((retries+1)))"
-            sleep 5
-            TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG_FILE" | tail -n 1)
-            ((retries++))
-        done
-        
-        [[ -z "$TUNNEL_URL" ]] && error "无法获取 Cloudflare Tunnel 域名，请检查 $LOG_FILE 日志文件。"
-        final_domain=$(echo "$TUNNEL_URL" | sed 's|https://||')
-    fi
-    
-    success "获取到的域名: $final_domain"
-
-    VLESS_LINK="vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${final_domain}&fp=chrome&type=ws&host=${final_domain}&path=/#${NODE_NAME}" 
+    VLESS_LINK="vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&fp=chrome&type=ws&host=${ARGO_DOMAIN}&path=/#${NODE_NAME}" 
     
     SAVE_INFO="========================================
            节点信息 (VLESS + Sing-box)
@@ -246,7 +236,7 @@ show_and_save_result() {
 UUID: ${UUID}
 优选IP: ${CFIP}
 优选端口: ${CFPORT}
-隧道域名: ${final_domain}
+隧道域名: ${ARGO_DOMAIN}
 ----------------------------------------
 VLESS 链接:
 ${VLESS_LINK}
@@ -268,7 +258,8 @@ ${VLESS_LINK}
     echo
     cat "$NODE_INFO_FILE"
     echo
-    success "感谢使用！"
+    success "服务即将启动守护模式，请勿关闭终端..."
+    sleep 3 # 给用户一点时间看清节点信息
 }
 
 
@@ -276,27 +267,12 @@ ${VLESS_LINK}
 # --- 交互式菜单和安装流程 ---
 # =================================================================
 
-# 极速模式
-quick_mode() {
-    clear
-    echo -e "${BLUE}=== 极速模式 ===${NC}"
-    read -p "请输入您的 UUID (留空将自动生成): " UUID_INPUT
-    UUID=${UUID_INPUT:-$(generate_uuid)}
-    success "UUID 已设置为: $UUID"
-    
-    NODE_NAME="VLESS-Argo-Singbox-Quick"
-    CFIP="cloudflare.182682.xyz"
-    CFPORT="443"
-    ARGO_DOMAIN=""
-    ARGO_AUTH=""
-    
-    run_installation
-}
+# --- (函数 quick_mode 已被移除) ---
 
-# 完整模式
+# 完整模式 (修改为强制Argo)
 full_mode() {
     clear
-    echo -e "${BLUE}=== 完整配置模式 ===${NC}"
+    echo -e "${BLUE}=== 部署服务 (仅支持Argo Token) ===${NC}"
     read -p "请输入您的 UUID (留空将自动生成): " UUID_INPUT
     UUID=${UUID_INPUT:-$(generate_uuid)}
     success "UUID 已设置为: $UUID"
@@ -304,30 +280,26 @@ full_mode() {
     read -p "请输入节点名称 [默认: VLESS-Argo-Singbox]: " NODE_NAME_INPUT
     NODE_NAME=${NODE_NAME_INPUT:-"VLESS-Argo-Singbox"}
 
-    read -p "请输入优选IP/域名 [默认: cloudflare.182682.xyz]: " CFIP_INPUT
-    CFIP=${CFIP_INPUT:-"cloudflare.182682.xyz"}
+    read -p "请输入优选IP/域名 [默认: cdns.doon.eu.org]: " CFIP_INPUT
+    CFIP=${CFIP_INPUT:-"cdns.doon.eu.org"}
 
     read -p "请输入优选端口 [默认: 443]: " CFPORT_INPUT
     CFPORT=${CFPORT_INPUT:-"443"}
 
     echo
-    warn "如果您有 Cloudflare Argo 隧道的固定 Token，请输入它。"
-    warn "这将创建一个永久隧道，无需每次启动都生成新域名。"
-    warn "留空则使用临时的 trycloudflare.com 域名。"
-    read -p "请输入 Argo Tunnel Token (留空使用临时隧道): " ARGO_AUTH_INPUT
+    warn "此脚本现在只支持 Cloudflare Argo 永久隧道模式。"
+    read -p "请输入您的 Argo Tunnel Token (必须填写): " ARGO_AUTH_INPUT
+    [[ -z "$ARGO_AUTH_INPUT" ]] && error "Argo Token 不能为空。"
     ARGO_AUTH=${ARGO_AUTH_INPUT}
     
-    if [[ -n "$ARGO_AUTH" ]]; then
-        warn "由于您使用了 Argo Token，您需要提供一个已在Cloudflare上配置好的域名。"
-        read -p "请输入与该Token关联的域名 (必须填写): " ARGO_DOMAIN_INPUT
-        [[ -z "$ARGO_DOMAIN_INPUT" ]] && error "使用Argo Token时必须提供固定域名。"
-        ARGO_DOMAIN=${ARGO_DOMAIN_INPUT}
-    fi
+    read -p "请输入与该Token关联的域名 (必须填写): " ARGO_DOMAIN_INPUT
+    [[ -z "$ARGO_DOMAIN_INPUT" ]] && error "域名不能为空。"
+    ARGO_DOMAIN=${ARGO_DOMAIN_INPUT}
     
     run_installation
 }
 
-# 运行实际安装流程
+# 运行实际安装流程 (已修改)
 run_installation() {
     echo -e "${GREEN}=== 开始部署 (内核: sing-box) ===${NC}"
     detect_os_arch
@@ -355,8 +327,16 @@ run_installation() {
     download_and_install "cloudflared" "$CLOUDFLARED_BIN" "${CLOUDFLARED_URL_BASE}cloudflared-linux-${ARCH}" "bin"
     
     create_config_file
-    start_services_no_root # 启动服务
+    
+    # --- 关键修改: 调整函数顺序 ---
+    
+    # 1. (修改) 立即显示结果，因为我们已知道所有信息
     show_and_save_result
+    
+    # 2. (修改) 直接启动守护进程，此函数将永久阻塞
+    start_and_guard_services 
+    
+    # --- 修改结束 ---
 }
 
 # 卸载脚本
@@ -389,29 +369,26 @@ uninstall_service() {
 }
 
 
-# 主菜单
+# 主菜单 (已修改)
 main_menu() {
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}    Sing-box + Argo VLESS 部署脚本 (无ROOT) ${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}    适用于 Hugging Face Spaces 等受限环境  ${NC}"
+    echo -e "${GREEN}  Sing-box + Argo VLESS 部署脚本 (无ROOT) ${NC}"
+    echo -e "${GREEN}       (仅支持 Argo 永久隧道模式)      ${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo
     echo -e "${YELLOW}请选择操作:${NC}"
-    echo -e "${BLUE}1) 极速模式 - 自动配置，快速部署 (临时域名)${NC}"
-    echo -e "${BLUE}2) 完整模式 - 自定义配置项 (推荐 Argo Token)${NC}"
-    echo -e "${BLUE}3) 查看节点信息 - 显示已保存的节点${NC}"
-    echo -e "${RED}4) 卸载脚本 - 移除所有相关文件和进程${NC}"
+    echo -e "${BLUE}1) 部署服务 (Argo Token 模式)${NC}"
+    echo -e "${BLUE}2) 查看节点信息 - 显示已保存的节点${NC}"
+    echo -e "${RED}3) 卸载脚本 - 移除所有相关文件和进程${NC}"
     echo
-    read -p "请输入选择 (1/2/3/4): " MODE_CHOICE
+    read -p "请输入选择 (1/2/3): " MODE_CHOICE
 
     case $MODE_CHOICE in
-        1) quick_mode ;;
-        2) full_mode ;;
-        3) view_node_info; exit 0 ;;
-        4) uninstall_service; exit 0 ;;
-        *) error "无效输入，请输入 1-4 之间的数字。" ;;
+        1) full_mode ;;
+        2) view_node_info; exit 0 ;;
+        3) uninstall_service; exit 0 ;;
+        *) error "无效输入，请输入 1-3 之间的数字。" ;;
     esac
 }
 
