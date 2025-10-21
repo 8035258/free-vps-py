@@ -142,7 +142,7 @@ net.core.default_qdisc = fq
 # TCP Fast Open (TFO) - 减少连接延迟
 net.ipv4.tcp_fastopen = 3
 
-# 增大 TCP/UDP 内存限制和 Backlog (约 64MB)
+# 增大 TCP/UDP 内存限制和 Backlog
 net.core.rmem_max = 33554432
 net.core.wmem_max = 33554432
 net.core.netdev_max_backlog = 100000
