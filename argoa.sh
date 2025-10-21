@@ -134,6 +134,46 @@ install_dependencies() {
     success "依赖安装完成。"
 }
 
+# 应用 TCP 拥塞控制和内核优化
+apply_tcp_optimizations() {
+    log "正在应用 TCP/BBR/FQ 内核优化..."
+
+    # 仅将优化配置追加到 sysctl.conf，确保设置永久化
+    cat <<EOF | sudo tee -a /etc/sysctl.conf
+# --- Custom Network Optimization Settings by argob.sh (for Hysteria2-like performance) ---
+net.ipv4.tcp_congestion_control = bbr
+net.core.default_qdisc = fq
+
+# TCP Fast Open (TFO) - 减少连接延迟
+net.ipv4.tcp_fastopen = 3
+
+# 增大 TCP/UDP 内存限制和 Backlog
+net.core.rmem_max = 33554432
+net.core.wmem_max = 33554432
+net.core.netdev_max_backlog = 100000
+
+# 调整 TCP 缓冲区大小
+net.ipv4.tcp_rmem = 4096 87380 33554432
+net.ipv4.tcp_wmem = 4096 87380 33554432
+
+# 启用其他 TCP 优化
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_ecn = 0
+EOF
+    
+    # 使配置立即生效，并抑制输出
+    sudo sysctl -p &> /dev/null
+
+    if [ $? -ne 0 ]; then
+        warn "内核参数应用可能存在错误，请检查您的内核是否完整支持所有参数。"
+    else
+        success "TCP 优化配置已应用并永久化。"
+    fi
+}
+
 # 停止并禁用旧服务
 stop_and_disable_services() {
     log "正在停止并禁用可能存在的旧服务..."
