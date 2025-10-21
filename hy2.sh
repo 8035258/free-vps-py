@@ -99,8 +99,8 @@ EOF
 echo "正在应用内核网络优化..."
 
 # 1. 临时增大缓冲区 (临时生效)
-sysctl -w net.core.rmem_max=16777216 2>/dev/null
-sysctl -w net.core.wmem_max=16777216 2>/dev/null
+sysctl -w net.core.rmem_max=33554432 2>/dev/null
+sysctl -w net.core.wmem_max=33554432 2>/dev/null
 
 # 2. 写入配置文件以永久生效
 # 检查是否已添加自定义优化块，防止重复写入
@@ -108,9 +108,9 @@ if ! grep -q "net.core.rmem_max" /etc/sysctl.conf; then
     echo -e "\n# --- Hysteria2/QUIC 优化 (自动添加) ---" >> /etc/sysctl.conf
     
     # 增大网络缓冲区上限 (设置为16MB)
-    echo "net.core.rmem_max = 16777216" >> /etc/sysctl.conf
-    echo "net.core.wmem_max = 16777216" >> /etc/sysctl.conf
-    echo "net.core.netdev_max_backlog = 250000" >> /etc/sysctl.conf
+    echo "net.core.rmem_max = 33554432" >> /etc/sysctl.conf
+    echo "net.core.wmem_max = 33554432" >> /etc/sysctl.conf
+    echo "net.core.netdev_max_backlog = 100000" >> /etc/sysctl.conf
     
     # 应用更改并抑制输出
     sysctl -p > /dev/null
