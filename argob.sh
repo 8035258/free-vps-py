@@ -143,13 +143,13 @@ net.core.default_qdisc = fq
 net.ipv4.tcp_fastopen = 3
 
 # 增大 TCP/UDP 内存限制和 Backlog (约 64MB)
-net.core.rmem_max = 67108864
-net.core.wmem_max = 67108864
-net.core.netdev_max_backlog = 250000
+net.core.rmem_max = 33554432
+net.core.wmem_max = 33554432
+net.core.netdev_max_backlog = 100000
 
 # 调整 TCP 缓冲区大小
-net.ipv4.tcp_rmem = 4096 87380 67108864
-net.ipv4.tcp_wmem = 4096 87380 67108864
+net.ipv4.tcp_rmem = 4096 87380 33554432
+net.ipv4.tcp_wmem = 4096 87380 33554432
 
 # 启用其他 TCP 优化
 net.ipv4.tcp_mtu_probing = 1
