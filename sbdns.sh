@@ -177,52 +177,44 @@ EOF
     success "配置文件创建完成: $CONFIG_FILE"
 }
 
-# --- (函数 start_services_no_root 已被移除) ---
-
-
-# --- 进程守护函数 ---
-start_and_guard_services() {
-    log "正在启动 [守护服务] 模式..."
+# --- 新增: 简单的 nohup 启动函数 ---
+start_services_no_root() {
+    log "正在使用 nohup 在后台启动服务..."
     
     # 确保日志文件存在并清空
     echo "" > "$LOG_FILE"
-    echo "--- $(date) --- 服务守护启动 ---" >> "$LOG_FILE"
+    echo "--- $(date) --- 服务启动 (nohup) ---" >> "$LOG_FILE"
 
-    log "在后台启动 [sing-box] 守护循环..."
-    (
-        while true; do
-            log "守护进程: 启动 sing-box..."
-            "$SINGBOX_BIN" run -c "$CONFIG_FILE" >> "$LOG_FILE" 2>&1
-            warn "守护进程: sing-box 意外退出，5秒后重启..."
-            sleep 5
-        done
-    ) &
-
-    log "等待 sing-box 启动 (3秒)..."
+    # 1. 启动 sing-box
+    nohup "$SINGBOX_BIN" run -c "$CONFIG_FILE" >> "$LOG_FILE" 2>&1 &
+    SINGBOX_PID=$!
+    log "Sing-box 进程已提交 (PID: $SINGBOX_PID)"
+    
+    # 增加延时，确保 Sing-box 启动并绑定端口
+    log "等待 Sing-box 启动 (3秒)..."
     sleep 3
 
-    # 准备 cloudflared 命令 (ARGO_AUTH 必须存在)
+    # 2. 启动 cloudflared
     if [[ -z "$ARGO_AUTH" ]]; then
-        error "守护进程启动失败: 未找到 ARGO_AUTH。请重新安装。"
+        error "启动失败: 未找到 ARGO_AUTH。"
     fi
     local CLOUDFLARED_EXEC="${CLOUDFLARED_BIN} tunnel --no-autoupdate run --token ${ARGO_AUTH}"
 
-    log "在前台启动 [cloudflared] 守护循环 (这将阻塞脚本)..."
-    success "服务已进入守护模式。保持此终端开启即可。"
-    success "按 [Ctrl+C] 可停止守护。"
-    
-    while true; do
-        log "守护进程: 启动 cloudflared..."
-        $CLOUDFLARED_EXEC >> "$LOG_FILE" 2>&1
-        warn "守护进程: cloudflared 意外退出，5秒后重启..."
-        sleep 5
-    done
+    nohup $CLOUDFLARED_EXEC >> "$LOG_FILE" 2>&1 &
+    CLOUDFLARED_PID=$!
+    log "Cloudflared 进程已提交 (PID: $CLOUDFLARED_PID)"
+
+    success "服务已在后台启动。查看日志：tail -f $LOG_FILE"
+    sleep 2
 }
+# --- 函数结束 ---
+
+
+# --- (函数 start_and_guard_services 已被移除) ---
 
 
 # 显示并保存结果 (已简化)
 show_and_save_result() {
-    # --- 修改: 不再需要获取临时域名 ---
     # ARGO_DOMAIN 是在 full_mode 中设置的全局变量
     success "使用固定域名: $ARGO_DOMAIN"
 
@@ -258,8 +250,8 @@ ${VLESS_LINK}
     echo
     cat "$NODE_INFO_FILE"
     echo
-    success "服务即将启动守护模式，请勿关闭终端..."
-    sleep 3 # 给用户一点时间看清节点信息
+    # --- 修改: 移除守护进程的提示 ---
+    success "服务即将在后台启动，脚本将退出。"
 }
 
 
@@ -267,9 +259,7 @@ ${VLESS_LINK}
 # --- 交互式菜单和安装流程 ---
 # =================================================================
 
-# --- (函数 quick_mode 已被移除) ---
-
-# 完整模式 (修改为强制Argo)
+# 完整模式 (强制Argo)
 full_mode() {
     clear
     echo -e "${BLUE}=== 部署服务 (仅支持Argo Token) ===${NC}"
@@ -328,13 +318,16 @@ run_installation() {
     
     create_config_file
     
-    # --- 关键修改: 调整函数顺序 ---
+    # --- 关键修改: 恢复为 nohup 启动 ---
     
-    # 1. (修改) 立即显示结果，因为我们已知道所有信息
+    # 1. 显示结果
     show_and_save_result
     
-    # 2. (修改) 直接启动守护进程，此函数将永久阻塞
-    start_and_guard_services 
+    # 2. (修改) 调用简单的 nohup 后台启动函数
+    start_services_no_root 
+    
+    # 3. 脚本执行完毕，将自动退出
+    success "脚本执行完毕，退出。"
     
     # --- 修改结束 ---
 }
